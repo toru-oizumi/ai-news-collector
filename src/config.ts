@@ -4,7 +4,7 @@ import type { RSSSourceConfig } from "./types.js";
 export const env = {
   NOTION_API_KEY: process.env.NOTION_API_KEY ?? "",
   NOTION_DATABASE_ID: process.env.NOTION_DATABASE_ID ?? "",
-  GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? "",
+  MISTRAL_API_KEY: process.env.MISTRAL_API_KEY ?? "",
   DRY_RUN: process.argv.includes("--dry-run"),
 } as const;
 
@@ -112,12 +112,12 @@ export const SCORE_CONFIG = {
   minScore: 30,
 };
 
-// ── Gemini ──
-export const GEMINI_CONFIG = {
-  model: "gemini-2.5-flash-lite",
-  apiUrl: "https://generativelanguage.googleapis.com/v1beta/models",
-  /** Max articles to summarise (stay within free RPD) */
-  maxSummarize: 50,
-  /** Delay between requests (ms) to respect RPM */
-  delayMs: 12_000, // ~5 RPM, conservative under 15 RPM limit
+// ── Mistral ──
+export const MISTRAL_CONFIG = {
+  model: "mistral-small-latest",
+  apiUrl: "https://api.mistral.ai/v1/chat/completions",
+  /** Max articles to summarise per run */
+  maxSummarize: 80,
+  /** Delay between requests (ms) — free tier is 2 RPM, so 31s interval */
+  delayMs: 31_000, // ~1.9 RPM, safe under 2 RPM limit
 };

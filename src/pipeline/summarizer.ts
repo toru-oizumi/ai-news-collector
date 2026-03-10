@@ -1,10 +1,10 @@
-import { GEMINI_CONFIG, env } from "../config.js";
+import { MISTRAL_CONFIG, env } from "../config.js";
 import type { Article } from "../types.js";
 
-interface GeminiResponse {
-  candidates?: {
-    content?: {
-      parts?: { text?: string }[];
+interface MistralResponse {
+  choices?: {
+    message?: {
+      content?: string;
     };
   }[];
   error?: { message: string };
@@ -23,18 +23,18 @@ Rules:
 - Keep it under 200 characters`;
 
 /**
- * Summarize articles using Gemini API (free tier).
+ * Summarize articles using Mistral API (free tier).
  * Gracefully degrades: if API fails or quota exceeded, articles keep empty summary.
  */
 export async function summarizeArticles(articles: Article[]): Promise<void> {
-  if (!env.GEMINI_API_KEY) {
-    console.log("[Summarizer] No GEMINI_API_KEY set — skipping summarization");
+  if (!env.MISTRAL_API_KEY) {
+    console.log("[Summarizer] No MISTRAL_API_KEY set — skipping summarization");
     return;
   }
 
-  const toProcess = articles.slice(0, GEMINI_CONFIG.maxSummarize);
+  const toProcess = articles.slice(0, MISTRAL_CONFIG.maxSummarize);
   console.log(
-    `[Summarizer] Processing ${toProcess.length} articles with ${GEMINI_CONFIG.model}...`
+    `[Summarizer] Processing ${toProcess.length} articles with ${MISTRAL_CONFIG.model}...`
   );
 
   let successCount = 0;
@@ -42,7 +42,7 @@ export async function summarizeArticles(articles: Article[]): Promise<void> {
 
   for (const article of toProcess) {
     try {
-      const summary = await callGemini(article);
+      const summary = await callMistral(article);
       if (summary) {
         article.summary = summary;
         successCount++;
@@ -61,42 +61,43 @@ export async function summarizeArticles(articles: Article[]): Promise<void> {
     }
 
     // Respect RPM limit
-    await sleep(GEMINI_CONFIG.delayMs);
+    await sleep(MISTRAL_CONFIG.delayMs);
   }
 
   console.log(`[Summarizer] Done: ${successCount} success, ${failCount} failed`);
 }
 
-async function callGemini(article: Article): Promise<string | null> {
+async function callMistral(article: Article): Promise<string | null> {
   const userPrompt = `Title: ${article.title}\nAbstract: ${article.abstract || "(no abstract)"}`;
 
-  const url = `${GEMINI_CONFIG.apiUrl}/${GEMINI_CONFIG.model}:generateContent?key=${env.GEMINI_API_KEY}`;
-
-  const res = await fetch(url, {
+  const res = await fetch(MISTRAL_CONFIG.apiUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${env.MISTRAL_API_KEY}`,
+    },
     body: JSON.stringify({
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [{ parts: [{ text: userPrompt }] }],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 300,
-      },
+      model: MISTRAL_CONFIG.model,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 300,
     }),
     signal: AbortSignal.timeout(30_000),
   });
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Gemini API ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`Mistral API ${res.status}: ${text.slice(0, 200)}`);
   }
 
-  const data = (await res.json()) as GeminiResponse;
-  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+  const data = (await res.json()) as MistralResponse;
+  const raw = data.choices?.[0]?.message?.content?.trim() ?? "";
 
   // Parse JSON response
   try {
-    // Strip markdown fences if present
     const cleaned = raw
       .replace(/^```json?\n?/, "")
       .replace(/\n?```$/, "")

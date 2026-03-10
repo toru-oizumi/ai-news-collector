@@ -16,7 +16,7 @@ GitHub Actions (cron: daily 09:00 JST)
 ├─ Dedup (URL normalization)
 ├─ Score & Categorize (source weight + keyword bonus)
 ├─ Notion Dedup (exclude existing URLs)
-├─ Summarize (Gemini 2.5 Flash-Lite → Japanese summary)
+├─ Summarize (Mistral Small free tier → Japanese summary)
 └─ Push to Notion Database
 ```
 
@@ -44,10 +44,10 @@ GitHub Actions (cron: daily 09:00 JST)
    / Database ページで Integration を接続（右上 ••• → Connections → 作成した Integration を追加）
 1. Copy the Database ID from the URL: `https://www.notion.so/<DATABASE_ID>?v=...`
 
-### 2. Gemini API
+### 2. Mistral API
 
-1. Get a free API Key from [Google AI Studio](https://aistudio.google.com/apikey) (no credit card required)
-   / [Google AI Studio](https://aistudio.google.com/apikey) で無料 API Key を取得（クレカ不要）
+1. Get a free API Key from [Mistral AI Console](https://console.mistral.ai/) → API Keys (no credit card required)
+   / [Mistral AI Console](https://console.mistral.ai/) → API Keys で無料 API Key を取得（クレカ不要）
 
 ### 3. GitHub
 
@@ -56,7 +56,7 @@ GitHub Actions (cron: daily 09:00 JST)
    / Settings → Secrets and variables → Actions で以下を設定:
    - `NOTION_API_KEY`
    - `NOTION_DATABASE_ID`
-   - `GEMINI_API_KEY`
+   - `MISTRAL_API_KEY`
 
 ### 4. Local Setup / ローカルセットアップ
 
@@ -70,7 +70,7 @@ npm install
 # Copy env file and fill in your credentials
 cp .env.example .env
 
-# Dry run (no Notion/Gemini calls)
+# Dry run (no Notion/Mistral calls)
 npm run collect:dry
 
 # Full run
@@ -119,7 +119,7 @@ All within free tiers / すべて無料枠内:
 | Service | Free Tier | Usage |
 |---|---|---|
 | GitHub Actions | 2,000 min/month (private) | ~150 min/month |
-| Gemini API | 1,000 RPD | ~80 articles/day |
+| Mistral API | 1B tokens/month, 2 RPM (free Experiment plan) | ~80 articles/day |
 | Notion API | Free plan | — |
 
 ## License
