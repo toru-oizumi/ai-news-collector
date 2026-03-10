@@ -10,16 +10,23 @@ export const anthropicFetcher: Fetcher = {
 
     for (const pageUrl of ANTHROPIC_URLS) {
       try {
-        const res = await fetch(pageUrl, {
-          headers: { "User-Agent": "AI-News-Collector/1.0 (github.com)" },
-          signal: AbortSignal.timeout(15_000),
-        });
-        if (!res.ok) {
-          console.warn(`[Anthropic] ${pageUrl} returned ${res.status}`);
-          continue;
-        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15_000);
 
-        const html = await res.text();
+        let html: string;
+        try {
+          const res = await fetch(pageUrl, {
+            headers: { "User-Agent": "AI-News-Collector/1.0 (github.com)" },
+            signal: controller.signal,
+          });
+          if (!res.ok) {
+            console.warn(`[Anthropic] ${pageUrl} returned ${res.status}`);
+            continue;
+          }
+          html = await res.text();
+        } finally {
+          clearTimeout(timer);
+        }
         const $ = cheerio.load(html);
 
         // Anthropic uses <a> tags with href starting with /news/ or /engineering/ or /research/
