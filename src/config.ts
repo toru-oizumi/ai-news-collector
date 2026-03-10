@@ -117,7 +117,7 @@ export const GEMINI_CONFIG = {
   model: "gemini-2.5-flash-lite",
   apiUrl: "https://generativelanguage.googleapis.com/v1beta/models",
   /** Max articles to summarise (stay within free RPD) */
-  maxSummarize: 80,
+  maxSummarize: 50,
   /** Delay between requests (ms) to respect RPM */
-  delayMs: 7_000, // ~8-9 RPM, safe under 15 RPM limit
+  delayMs: 12_000, // ~5 RPM, conservative under 15 RPM limit
 };
