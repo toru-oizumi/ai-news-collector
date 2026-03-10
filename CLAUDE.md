@@ -34,7 +34,7 @@ GitHub Actions で毎朝 09:00 JST (00:00 UTC) に実行される。
 │   ├── pipeline/            # 処理パイプライン
 │   │   ├── dedup.ts             # URL 正規化・重複排除
 │   │   ├── scorer.ts            # スコアリング・カテゴリ自動分類
-│   │   ├── summarizer.ts        # Gemini API 日本語要約
+│   │   ├── summarizer.ts        # Mistral API 日本語要約
 │   │   └── __tests__/           # Vitest テスト
 │   │       ├── dedup.test.ts
 │   │       └── scorer.test.ts
@@ -59,7 +59,7 @@ GitHub Actions で毎朝 09:00 JST (00:00 UTC) に実行される。
 mise install               # Node.js 24 をインストール
 
 # 実行
-npm run collect            # 本番実行 (Notion + Gemini 使用)
+npm run collect            # 本番実行 (Notion + Mistral 使用)
 npm run collect:dry        # ドライラン (外部 API 呼び出しなし)
 
 # テスト
@@ -93,7 +93,7 @@ Score & Categorize (sourceWeights + keywordBonus → minScore フィルタ)
       ↓
 Notion Dedup (本番のみ: 既存 URL を DB から取得して除外)
       ↓
-Summarize (Gemini 2.5 Flash-Lite: 最大 80 件, 7s 間隔で RPM 制限回避)
+Summarize (Mistral Small: 最大 80 件, 31s 間隔で 2 RPM 制限回避)
       ↓
 Push to Notion Database
 ```
@@ -110,7 +110,7 @@ Push to Notion Database
 - `SCORE_CONFIG.sourceWeights`: ソースごとの基本スコア
 - `SCORE_CONFIG.keywordBonus`: キーワードマッチ時のボーナス
 - `SCORE_CONFIG.minScore`: フィルタ閾値 (デフォルト 30)
-- `GEMINI_CONFIG`: モデル名・RPM 制限設定
+- `MISTRAL_CONFIG`: モデル名・RPM 制限設定
 
 ### `src/types.ts`
 
@@ -152,7 +152,7 @@ Push to Notion Database
 |--------|------|------|
 | `NOTION_API_KEY` | 本番のみ | Notion Integration の API Key |
 | `NOTION_DATABASE_ID` | 本番のみ | 対象 Database の ID |
-| `GEMINI_API_KEY` | 本番のみ | Google AI Studio の API Key |
+| `MISTRAL_API_KEY` | 本番のみ | Mistral AI Console の API Key |
 
 ローカル開発では `.env` ファイルに記述 (`.gitignore` 済み)。
 ドライラン (`--dry-run`) では環境変数不要。
@@ -181,5 +181,5 @@ Push to Notion Database
 | サービス | 無料枠 | 使用量 |
 |---------|--------|--------|
 | GitHub Actions | 月 2,000 分 (private repo) | 1 回 3-5 分 × 30 日 ≈ 150 分 |
-| Gemini API | 1,000 RPD | 日次 80 件以下なら余裕 |
+| Mistral API | 1B tokens/month, 2 RPM (free Experiment) | 日次 80 件以下なら余裕 |
 | Notion API | 無料プラン対応 | — |
