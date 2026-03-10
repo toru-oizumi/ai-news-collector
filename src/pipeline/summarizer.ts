@@ -34,7 +34,9 @@ export async function summarizeOne(article: Article): Promise<void> {
     const summary = await callMistral(article);
     if (summary) article.summary = summary;
   } catch (err: unknown) {
-    if (err instanceof Error && err.message.includes("429")) {
+    const msg = err instanceof Error ? err.message : String(err);
+
+    if (msg.includes("429")) {
       console.warn("[Summarizer] Rate limited — pausing 60s...");
       await sleep(60_000);
       // Retry once after backoff
@@ -46,7 +48,9 @@ export async function summarizeOne(article: Article): Promise<void> {
       }
       return;
     }
-    console.warn(`[Summarizer] Failed for "${article.title}":`, err);
+
+    // Timeout / abort / network errors — log and continue without summary
+    console.warn(`[Summarizer] Skipped "${article.title.slice(0, 60)}": ${msg}`);
   }
 
   // Respect RPM limit between requests
