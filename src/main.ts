@@ -74,8 +74,12 @@ async function main() {
   }
 
   // ── Step 5: Summarize with Gemini ──
-  console.log("\n[5/5] Summarizing with Gemini...");
-  await summarizeArticles(articles);
+  if (env.DRY_RUN) {
+    console.log("\n[5/5] Skipping Gemini summarization (dry-run)");
+  } else {
+    console.log("\n[5/5] Summarizing with Gemini...");
+    await summarizeArticles(articles);
+  }
 
   // ── Output / Push ──
   if (env.DRY_RUN) {
