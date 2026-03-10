@@ -1,0 +1,11 @@
+{
+  "config": {
+    "default": true,
+    // Allow inline HTML
+    "MD033": false,
+    // Allow long lines (URLs etc.)
+    "MD013": false,
+    // Allow duplicate headings in different sections
+    "MD024": { "siblings_only": true }
+  }
+}

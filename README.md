@@ -6,7 +6,7 @@ AI/ML 関連の最新ニュースを自動収集して Notion Database に蓄積
 
 ## Architecture / アーキテクチャ
 
-```
+```text
 GitHub Actions (cron: daily 09:00 JST)
 ├─ Fetch (parallel)
 │  ├─ RSS: OpenAI, DeepMind, Google AI, Meta AI, NVIDIA, AWS, arXiv
@@ -40,9 +40,9 @@ GitHub Actions (cron: daily 09:00 JST)
 | Fetched | Date | |
 | Status | Select | Unread / Read / Starred |
 
-3. Connect the Integration to the Database (••• → Connections → add your Integration)
+1. Connect the Integration to the Database (••• → Connections → add your Integration)
    / Database ページで Integration を接続（右上 ••• → Connections → 作成した Integration を追加）
-4. Copy the Database ID from the URL: `https://www.notion.so/<DATABASE_ID>?v=...`
+1. Copy the Database ID from the URL: `https://www.notion.so/<DATABASE_ID>?v=...`
 
 ### 2. Gemini API
 
@@ -103,6 +103,7 @@ Edit `RSS_SOURCES` in `src/config.ts`. You can add keyword filters:
 
 Edit `SCORE_CONFIG` in `src/config.ts`:
 / `src/config.ts` の `SCORE_CONFIG` で:
+
 - `sourceWeights`: base score per source / ソースごとの基本スコア
 - `keywordBonus`: bonus on keyword match / キーワードマッチ時のボーナス
 - `minScore`: filter threshold / フィルタ閾値

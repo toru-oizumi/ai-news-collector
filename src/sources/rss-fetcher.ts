@@ -24,7 +24,7 @@ export function createRSSFetcher(config: RSSSourceConfig): Fetcher {
             if (!matched) return null;
           }
 
-          return {
+          const article: Article = {
             title,
             url: normalizeUrl(url),
             source: config.name,
@@ -34,7 +34,8 @@ export function createRSSFetcher(config: RSSSourceConfig): Fetcher {
             publishedAt: item.pubDate ? new Date(item.pubDate) : null,
             fetchedAt: new Date(),
             abstract: (item.contentSnippet ?? item.content ?? "").slice(0, 1000),
-          } satisfies Article;
+          };
+          return article;
         })
         .filter((a): a is Article => a !== null);
 

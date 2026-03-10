@@ -20,7 +20,7 @@ GitHub Actions で毎朝 09:00 JST (00:00 UTC) に実行される。
 
 ## Directory Structure
 
-```
+```text
 .
 ├── src/
 │   ├── main.ts              # エントリポイント・パイプライン全体の制御
@@ -80,7 +80,7 @@ npm run typecheck          # TypeScript 型チェック (tsc --noEmit)
 
 ## Pipeline Architecture
 
-```
+```text
 Fetch (並列)
  ├── RSS: OpenAI, DeepMind, Google AI, Meta AI, NVIDIA, AWS ML, arXiv (cs.AI/cs.CL/cs.LG)
  ├── HTML Scrape: Anthropic (news + engineering)
@@ -130,9 +130,11 @@ Push to Notion Database
 ### RSS の場合
 
 `src/config.ts` の `RSS_SOURCES` に追加:
+
 ```ts
 { name: "Mistral", url: "https://mistral.ai/feed.xml", keywords: ["model", "release"] }
 ```
+
 `src/types.ts` の `Source` 型にも追加する。
 
 ### スクレイパー / API の場合

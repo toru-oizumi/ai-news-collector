@@ -34,7 +34,7 @@ export async function getExistingUrls(): Promise<Set<string>> {
     for (const page of res.results) {
       if ("properties" in page) {
         const urlProp = page.properties.URL;
-        if (urlProp?.type === "url" && urlProp.url) {
+        if (urlProp?.type === "url" && typeof urlProp.url === "string") {
           urls.add(urlProp.url);
         }
       }
