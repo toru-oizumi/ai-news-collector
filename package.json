@@ -4,8 +4,8 @@
   "description": "Collect AI/ML news from various sources and push to Notion",
   "type": "module",
   "scripts": {
-    "collect": "tsx src/main.ts",
-    "collect:dry": "tsx src/main.ts --dry-run",
+    "collect": "tsx --no-deprecation src/main.ts",
+    "collect:dry": "tsx --no-deprecation src/main.ts --dry-run",
     "test": "vitest",
     "test:run": "vitest run",
     "lint": "biome lint .",
