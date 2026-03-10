@@ -73,63 +73,52 @@ export async function getExistingUrls(): Promise<Set<string>> {
   return urls;
 }
 
-// ── Push articles to Notion ──
+// ── Push a single article to Notion ──
 
-export async function pushToNotion(
-  articles: Article[]
-): Promise<{ created: number; skipped: number }> {
+export async function pushOneToNotion(article: Article): Promise<boolean> {
   const client = getClient();
-  let created = 0;
-  let skipped = 0;
-
-  // Process in batches to respect Notion API rate limits (3 req/sec)
-  for (const article of articles) {
-    try {
-      await withRetry(
-        () =>
-          client.pages.create({
-            parent: { database_id: env.NOTION_DATABASE_ID },
-            properties: {
-              Title: {
-                title: [{ text: { content: article.title.slice(0, 200) } }],
-              },
-              URL: {
-                url: article.url,
-              },
-              Source: {
-                select: { name: article.source },
-              },
-              Category: {
-                multi_select: article.category.map((c) => ({ name: c })),
-              },
-              Score: {
-                number: article.score,
-              },
-              Summary: {
-                rich_text: [{ text: { content: article.summary.slice(0, 2000) } }],
-              },
-              Published: article.publishedAt
-                ? { date: { start: article.publishedAt.toISOString().split("T")[0] } }
-                : { date: null },
-              Fetched: {
-                date: { start: article.fetchedAt.toISOString().split("T")[0] },
-              },
-              Status: {
-                select: { name: "Unread" },
-              },
+  try {
+    await withRetry(
+      () =>
+        client.pages.create({
+          parent: { database_id: env.NOTION_DATABASE_ID },
+          properties: {
+            Title: {
+              title: [{ text: { content: article.title.slice(0, 200) } }],
             },
-          }),
-        article.title
-      );
-      created++;
-    } catch (err) {
-      console.warn(`[Notion] Failed to create page for "${article.title}":`, err);
-      skipped++;
-    }
-
+            URL: {
+              url: article.url,
+            },
+            Source: {
+              select: { name: article.source },
+            },
+            Category: {
+              multi_select: article.category.map((c) => ({ name: c })),
+            },
+            Score: {
+              number: article.score,
+            },
+            Summary: {
+              rich_text: [{ text: { content: article.summary.slice(0, 2000) } }],
+            },
+            Published: article.publishedAt
+              ? { date: { start: article.publishedAt.toISOString().split("T")[0] } }
+              : { date: null },
+            Fetched: {
+              date: { start: article.fetchedAt.toISOString().split("T")[0] },
+            },
+            Status: {
+              select: { name: "Unread" },
+            },
+          },
+        }),
+      article.title
+    );
     // Notion rate limit: 3 requests/sec → ~340ms between requests
     await new Promise((r) => setTimeout(r, 350));
+    return true;
+  } catch (err) {
+    console.warn(`[Notion] Failed to create page for "${article.title}":`, err);
+    return false;
   }
-
-  return { created, skipped };
 }

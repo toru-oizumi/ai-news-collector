@@ -1,8 +1,8 @@
-import { RSS_SOURCES, env } from "./config.js";
-import { getExistingUrls, pushToNotion } from "./notion/client.js";
+import { MISTRAL_CONFIG, RSS_SOURCES, env } from "./config.js";
+import { getExistingUrls, pushOneToNotion } from "./notion/client.js";
 import { dedup } from "./pipeline/dedup.js";
 import { scoreAndFilter } from "./pipeline/scorer.js";
-import { summarizeArticles } from "./pipeline/summarizer.js";
+import { summarizeOne } from "./pipeline/summarizer.js";
 import { anthropicFetcher } from "./sources/anthropic-scraper.js";
 import { hackerNewsFetcher } from "./sources/hackernews.js";
 import { huggingFaceFetcher } from "./sources/huggingface.js";
@@ -73,33 +73,43 @@ async function main() {
     return;
   }
 
-  // ── Step 5: Summarize with Mistral ──
+  // ── Step 5: Process article by article (summarize → push) ──
+  const toProcess = articles.slice(0, MISTRAL_CONFIG.maxSummarize);
+
   if (env.DRY_RUN) {
     console.log("\n[5/5] Skipping Mistral summarization (dry-run)");
-  } else {
-    console.log("\n[5/5] Summarizing with Mistral...");
-    await summarizeArticles(articles);
-  }
-
-  // ── Output / Push ──
-  if (env.DRY_RUN) {
     console.log("\n=== DRY RUN RESULTS ===");
-    for (const a of articles.slice(0, 20)) {
+    for (const a of toProcess.slice(0, 20)) {
       console.log(`\n[${a.source}] (score: ${a.score}) ${a.title}`);
       console.log(`  URL: ${a.url}`);
       console.log(`  Categories: ${a.category.join(", ")}`);
-      if (a.summary) console.log(`  Summary: ${a.summary}`);
     }
-    if (articles.length > 20) {
-      console.log(`\n... and ${articles.length - 20} more`);
+    if (toProcess.length > 20) {
+      console.log(`\n... and ${toProcess.length - 20} more`);
     }
   } else if (env.NOTION_API_KEY && env.NOTION_DATABASE_ID) {
-    console.log("\nPushing to Notion...");
-    const result = await pushToNotion(articles);
-    console.log(`  Created: ${result.created}, Skipped: ${result.skipped}`);
+    console.log(`\n[5/5] Processing ${toProcess.length} articles (summarize → push)...`);
+    let created = 0;
+    let skipped = 0;
+
+    for (let i = 0; i < toProcess.length; i++) {
+      const article = toProcess[i];
+      const tag = `[${i + 1}/${toProcess.length}]`;
+
+      await summarizeOne(article);
+
+      const ok = await pushOneToNotion(article);
+      if (ok) created++;
+      else skipped++;
+
+      const title = article.title.slice(0, 60);
+      console.log(`  ${tag} ${ok ? "✓" : "✗"} [${article.source}] ${title}`);
+    }
+
+    console.log(`\n  Created: ${created}, Skipped: ${skipped}`);
   } else {
     console.warn("\n⚠ No NOTION_API_KEY / NOTION_DATABASE_ID — printing results only");
-    for (const a of articles.slice(0, 10)) {
+    for (const a of toProcess.slice(0, 10)) {
       console.log(`[${a.source}] ${a.title} → ${a.url}`);
     }
   }

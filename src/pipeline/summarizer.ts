@@ -23,48 +23,34 @@ Rules:
 - Keep it under 200 characters`;
 
 /**
- * Summarize articles using Mistral API (free tier).
- * Gracefully degrades: if API fails or quota exceeded, articles keep empty summary.
+ * Summarize a single article using Mistral API.
+ * Sets article.summary in place. Silently skips on failure.
+ * Includes rate-limit backoff and inter-request delay.
  */
-export async function summarizeArticles(articles: Article[]): Promise<void> {
-  if (!env.MISTRAL_API_KEY) {
-    console.log("[Summarizer] No MISTRAL_API_KEY set — skipping summarization");
-    return;
-  }
+export async function summarizeOne(article: Article): Promise<void> {
+  if (!env.MISTRAL_API_KEY) return;
 
-  const toProcess = articles.slice(0, MISTRAL_CONFIG.maxSummarize);
-  console.log(
-    `[Summarizer] Processing ${toProcess.length} articles with ${MISTRAL_CONFIG.model}...`
-  );
-
-  let successCount = 0;
-  let failCount = 0;
-
-  for (const article of toProcess) {
-    try {
-      const summary = await callMistral(article);
-      if (summary) {
-        article.summary = summary;
-        successCount++;
-      } else {
-        failCount++;
+  try {
+    const summary = await callMistral(article);
+    if (summary) article.summary = summary;
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes("429")) {
+      console.warn("[Summarizer] Rate limited — pausing 60s...");
+      await sleep(60_000);
+      // Retry once after backoff
+      try {
+        const summary = await callMistral(article);
+        if (summary) article.summary = summary;
+      } catch {
+        // Give up on this article — summary stays empty
       }
-    } catch (err: unknown) {
-      failCount++;
-      // If rate limited (429), back off and continue
-      if (err instanceof Error && err.message.includes("429")) {
-        console.warn("[Summarizer] Rate limited — pausing 60s...");
-        await sleep(60_000);
-        continue;
-      }
-      console.warn(`[Summarizer] Failed for "${article.title}":`, err);
+      return;
     }
-
-    // Respect RPM limit
-    await sleep(MISTRAL_CONFIG.delayMs);
+    console.warn(`[Summarizer] Failed for "${article.title}":`, err);
   }
 
-  console.log(`[Summarizer] Done: ${successCount} success, ${failCount} failed`);
+  // Respect RPM limit between requests
+  await sleep(MISTRAL_CONFIG.delayMs);
 }
 
 async function callMistral(article: Article): Promise<string | null> {
@@ -96,7 +82,6 @@ async function callMistral(article: Article): Promise<string | null> {
   const data = (await res.json()) as MistralResponse;
   const raw = data.choices?.[0]?.message?.content?.trim() ?? "";
 
-  // Parse JSON response
   try {
     const cleaned = raw
       .replace(/^```json?\n?/, "")
@@ -105,7 +90,6 @@ async function callMistral(article: Article): Promise<string | null> {
     const parsed = JSON.parse(cleaned) as { summary?: string };
     return parsed.summary ?? null;
   } catch {
-    // If not valid JSON, use raw text as summary
     return raw.length > 10 ? raw.slice(0, 300) : null;
   }
 }
