@@ -1,6 +1,29 @@
-import { Client } from "@notionhq/client";
+import { APIResponseError, Client } from "@notionhq/client";
 import { env } from "../config.js";
 import type { Article } from "../types.js";
+
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000]; // 3 retries with backoff
+
+async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isRateLimit = err instanceof APIResponseError && err.status === 429;
+      const hasRetry = attempt < RETRY_DELAYS_MS.length;
+
+      if (isRateLimit && hasRetry) {
+        const delay = RETRY_DELAYS_MS[attempt];
+        console.warn(`[Notion] Rate limited on "${label}" — retrying in ${delay / 1000}s...`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  // unreachable, but satisfies TypeScript
+  throw new Error("withRetry: exhausted retries");
+}
 
 let notion: Client;
 
@@ -21,15 +44,19 @@ export async function getExistingUrls(): Promise<Set<string>> {
   // Paginate through all pages to collect URLs
   // Notion API returns 100 results per page
   do {
-    const res = await client.databases.query({
-      database_id: env.NOTION_DATABASE_ID,
-      start_cursor: cursor,
-      page_size: 100,
-      filter: {
-        property: "URL",
-        url: { is_not_empty: true },
-      },
-    });
+    const res = await withRetry(
+      () =>
+        client.databases.query({
+          database_id: env.NOTION_DATABASE_ID,
+          start_cursor: cursor,
+          page_size: 100,
+          filter: {
+            property: "URL",
+            url: { is_not_empty: true },
+          },
+        }),
+      "databases.query"
+    );
 
     for (const page of res.results) {
       if ("properties" in page) {
@@ -58,38 +85,42 @@ export async function pushToNotion(
   // Process in batches to respect Notion API rate limits (3 req/sec)
   for (const article of articles) {
     try {
-      await client.pages.create({
-        parent: { database_id: env.NOTION_DATABASE_ID },
-        properties: {
-          Title: {
-            title: [{ text: { content: article.title.slice(0, 200) } }],
-          },
-          URL: {
-            url: article.url,
-          },
-          Source: {
-            select: { name: article.source },
-          },
-          Category: {
-            multi_select: article.category.map((c) => ({ name: c })),
-          },
-          Score: {
-            number: article.score,
-          },
-          Summary: {
-            rich_text: [{ text: { content: article.summary.slice(0, 2000) } }],
-          },
-          Published: article.publishedAt
-            ? { date: { start: article.publishedAt.toISOString().split("T")[0] } }
-            : { date: null },
-          Fetched: {
-            date: { start: article.fetchedAt.toISOString().split("T")[0] },
-          },
-          Status: {
-            select: { name: "Unread" },
-          },
-        },
-      });
+      await withRetry(
+        () =>
+          client.pages.create({
+            parent: { database_id: env.NOTION_DATABASE_ID },
+            properties: {
+              Title: {
+                title: [{ text: { content: article.title.slice(0, 200) } }],
+              },
+              URL: {
+                url: article.url,
+              },
+              Source: {
+                select: { name: article.source },
+              },
+              Category: {
+                multi_select: article.category.map((c) => ({ name: c })),
+              },
+              Score: {
+                number: article.score,
+              },
+              Summary: {
+                rich_text: [{ text: { content: article.summary.slice(0, 2000) } }],
+              },
+              Published: article.publishedAt
+                ? { date: { start: article.publishedAt.toISOString().split("T")[0] } }
+                : { date: null },
+              Fetched: {
+                date: { start: article.fetchedAt.toISOString().split("T")[0] },
+              },
+              Status: {
+                select: { name: "Unread" },
+              },
+            },
+          }),
+        article.title
+      );
       created++;
     } catch (err) {
       console.warn(`[Notion] Failed to create page for "${article.title}":`, err);
