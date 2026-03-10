@@ -73,11 +73,11 @@ async function main() {
     return;
   }
 
-  // ── Step 5: Summarize with Gemini ──
+  // ── Step 5: Summarize with Mistral ──
   if (env.DRY_RUN) {
-    console.log("\n[5/5] Skipping Gemini summarization (dry-run)");
+    console.log("\n[5/5] Skipping Mistral summarization (dry-run)");
   } else {
-    console.log("\n[5/5] Summarizing with Gemini...");
+    console.log("\n[5/5] Summarizing with Mistral...");
     await summarizeArticles(articles);
   }
 
