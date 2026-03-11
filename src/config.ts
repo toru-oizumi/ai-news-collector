@@ -116,8 +116,8 @@ export const SCORE_CONFIG = {
 export const MISTRAL_CONFIG = {
   model: "mistral-small-latest",
   apiUrl: "https://api.mistral.ai/v1/chat/completions",
-  /** Max articles to summarise per run */
-  maxSummarize: 80,
+  /** Max articles to summarise per run (50 x ~32s = ~27min, fits in 30min timeout) */
+  maxSummarize: 50,
   /** Delay between requests (ms) — free tier is 2 RPM, so 31s interval */
   delayMs: 31_000, // ~1.9 RPM, safe under 2 RPM limit
 };
