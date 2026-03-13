@@ -49,8 +49,8 @@ Runs two daily jobs: **collect** (fetch & summarize) and **digest** (detailed an
 | Fetched | Date | |
 | Status | Select | **Unread** / **Digested** / Read / Starred |
 
-3. Connect the Integration to the Database (••• → Connections → add your Integration).
-4. Copy the Database ID from the URL: `https://www.notion.so/<DATABASE_ID>?v=...`
+1. Connect the Integration to the Database (••• → Connections → add your Integration).
+1. Copy the Database ID from the URL: `https://www.notion.so/<DATABASE_ID>?v=...`
 
 > **Note:** Add **"Digested"** as a Status option so Job 2 can update processed articles.
 
