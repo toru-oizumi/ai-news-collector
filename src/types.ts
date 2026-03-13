@@ -24,7 +24,15 @@ export type Source =
   | "GitHub Trending"
   | "Mistral"
   | "xAI"
-  | "AWS ML";
+  | "AWS ML"
+  | "Ollama"
+  | "Qwen"
+  | "Claude Code"
+  | "Cursor"
+  | "Windsurf"
+  | "GitHub Blog"
+  | "LangChain"
+  | "Vercel";
 
 export type Category =
   | "LLM"
