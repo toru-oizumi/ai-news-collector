@@ -52,7 +52,22 @@ const CATEGORY_RULES: { keywords: string[]; category: Category }[] = [
   },
   { keywords: ["multimodal", "multi-modal", "audio", "speech", "voice"], category: "Multimodal" },
   { keywords: ["reinforcement learning", "rlhf", "reward model", "ppo", "dpo"], category: "RL" },
-  { keywords: ["code", "coding", "copilot", "ide", "programming", "swe-bench"], category: "Code" },
+  {
+    keywords: [
+      "code",
+      "coding",
+      "copilot",
+      "ide",
+      "programming",
+      "swe-bench",
+      "cursor",
+      "windsurf",
+      "claude code",
+      "codex",
+      "qwen-coder",
+    ],
+    category: "Code",
+  },
   {
     keywords: ["safety", "alignment", "red team", "jailbreak", "guardrail", "constitutional"],
     category: "Safety",

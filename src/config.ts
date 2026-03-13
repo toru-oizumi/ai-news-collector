@@ -30,6 +30,50 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
     keywords: ["ai", "llm", "gpu", "inference", "training", "cuda", "tensor"],
   },
   { name: "AWS ML", url: "https://aws.amazon.com/blogs/ai/feed/" },
+
+  // Tier 3: Model releases
+  {
+    name: "Mistral",
+    url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_mistral.xml",
+  },
+  {
+    name: "xAI",
+    url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_xainews.xml",
+  },
+  {
+    name: "Ollama",
+    url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_ollama.xml",
+  },
+  // NOTE: Pinned to QwenLM/Qwen3 repo. Update to the latest model repo
+  // (e.g. Qwen4/releases.atom) when a new generation is released.
+  { name: "Qwen", url: "https://github.com/QwenLM/Qwen3/releases.atom" },
+
+  // Tier 3: AI coding tools
+  {
+    name: "Claude Code",
+    url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_changelog_claude_code.xml",
+  },
+  {
+    name: "Cursor",
+    url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_cursor.xml",
+  },
+  {
+    name: "Windsurf",
+    url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_windsurf.xml",
+  },
+  {
+    name: "GitHub Blog",
+    url: "https://github.blog/feed/",
+    keywords: ["copilot", "ai", "code", "agent"],
+  },
+
+  // Tier 3: AI dev ecosystem
+  { name: "LangChain", url: "https://blog.langchain.dev/rss/" },
+  {
+    name: "Vercel",
+    url: "https://vercel.com/atom",
+    keywords: ["ai", "v0", "sdk"],
+  },
 ];
 
 // ── Anthropic (no official RSS — scrape from news + engineering pages) ──
@@ -93,9 +137,17 @@ export const SCORE_CONFIG = {
     HuggingFace: 60,
     "Hacker News": 0, // uses HN score directly
     "GitHub Trending": 50,
-    Mistral: 60,
+    Mistral: 70,
     xAI: 60,
     "AWS ML": 40,
+    Ollama: 50,
+    Qwen: 60,
+    "Claude Code": 70,
+    Cursor: 60,
+    Windsurf: 50,
+    "GitHub Blog": 50,
+    LangChain: 50,
+    Vercel: 40,
   } satisfies Record<string, number>,
 
   /** Bonus keywords (additive) */
