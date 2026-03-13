@@ -44,6 +44,8 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
     name: "Ollama",
     url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_ollama.xml",
   },
+  // NOTE: Pinned to QwenLM/Qwen3 repo. Update to the latest model repo
+  // (e.g. Qwen4/releases.atom) when a new generation is released.
   { name: "Qwen", url: "https://github.com/QwenLM/Qwen3/releases.atom" },
 
   // Tier 3: AI coding tools
