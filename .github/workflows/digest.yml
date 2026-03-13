@@ -1,0 +1,32 @@
+name: Generate Digests and Translations
+
+on:
+  schedule:
+    # 収集ジョブ(collect: 0 */6 * * *)の2時間後に実行
+    # 02:00 / 08:00 / 14:00 / 20:00 UTC
+    # 11:00 / 17:00 / 23:00 / 05:00 JST
+    - cron: "0 2/6 * * *"
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate digests and translations
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: npm run digest

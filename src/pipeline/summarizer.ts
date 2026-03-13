@@ -7,6 +7,11 @@ interface MistralResponse {
       content?: string;
     };
   }[];
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
   error?: { message: string };
 }
 
@@ -24,15 +29,17 @@ Rules:
 
 /**
  * Summarize a single article using Mistral API.
- * Sets article.summary in place. Silently skips on failure.
+ * Sets article.summary in place. Returns total tokens used (0 on failure).
  * Includes rate-limit backoff and inter-request delay.
  */
-export async function summarizeOne(article: Article): Promise<void> {
-  if (!env.MISTRAL_API_KEY) return;
+export async function summarizeOne(article: Article): Promise<number> {
+  if (!env.MISTRAL_API_KEY) return 0;
 
   try {
-    const summary = await callMistral(article);
+    const { summary, tokens } = await callMistral(article);
     if (summary) article.summary = summary;
+    await sleep(MISTRAL_CONFIG.delayMs);
+    return tokens;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
 
@@ -41,23 +48,24 @@ export async function summarizeOne(article: Article): Promise<void> {
       await sleep(60_000);
       // Retry once after backoff
       try {
-        const summary = await callMistral(article);
+        const { summary, tokens } = await callMistral(article);
         if (summary) article.summary = summary;
+        await sleep(MISTRAL_CONFIG.delayMs);
+        return tokens;
       } catch {
         // Give up on this article — summary stays empty
+        return 0;
       }
-      return;
     }
 
     // Timeout / abort / network errors — log and continue without summary
     console.warn(`[Summarizer] Skipped "${article.title.slice(0, 60)}": ${msg}`);
+    await sleep(MISTRAL_CONFIG.delayMs);
+    return 0;
   }
-
-  // Respect RPM limit between requests
-  await sleep(MISTRAL_CONFIG.delayMs);
 }
 
-async function callMistral(article: Article): Promise<string | null> {
+async function callMistral(article: Article): Promise<{ summary: string | null; tokens: number }> {
   const userPrompt = `Title: ${article.title}\nAbstract: ${article.abstract || "(no abstract)"}`;
 
   const res = await fetch(MISTRAL_CONFIG.apiUrl, {
@@ -85,6 +93,7 @@ async function callMistral(article: Article): Promise<string | null> {
 
   const data = (await res.json()) as MistralResponse;
   const raw = data.choices?.[0]?.message?.content?.trim() ?? "";
+  const tokens = data.usage?.total_tokens ?? 0;
 
   try {
     const cleaned = raw
@@ -92,9 +101,9 @@ async function callMistral(article: Article): Promise<string | null> {
       .replace(/\n?```$/, "")
       .trim();
     const parsed = JSON.parse(cleaned) as { summary?: string };
-    return parsed.summary ?? null;
+    return { summary: parsed.summary ?? null, tokens };
   } catch {
-    return raw.length > 10 ? raw.slice(0, 300) : null;
+    return { summary: raw.length > 10 ? raw.slice(0, 300) : null, tokens };
   }
 }
 
