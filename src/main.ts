@@ -91,12 +91,14 @@ async function main() {
     console.log(`\n[5/5] Processing ${toProcess.length} articles (summarize → push)...`);
     let created = 0;
     let skipped = 0;
+    let totalTokens = 0;
 
     for (let i = 0; i < toProcess.length; i++) {
       const article = toProcess[i];
       const tag = `[${i + 1}/${toProcess.length}]`;
 
-      await summarizeOne(article);
+      const tokens = await summarizeOne(article);
+      totalTokens += tokens;
 
       const ok = await pushOneToNotion(article);
       if (ok) created++;
@@ -107,6 +109,10 @@ async function main() {
     }
 
     console.log(`\n  Created: ${created}, Skipped: ${skipped}`);
+    const avgTokens = toProcess.length > 0 ? Math.round(totalTokens / toProcess.length) : 0;
+    console.log(
+      `[Summarizer] Total tokens: ${totalTokens.toLocaleString()} (avg: ${avgTokens}/article)`
+    );
   } else {
     console.warn("\n⚠ No NOTION_API_KEY / NOTION_DATABASE_ID — printing results only");
     for (const a of toProcess.slice(0, 10)) {

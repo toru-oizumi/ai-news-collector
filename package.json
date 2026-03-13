@@ -6,6 +6,8 @@
   "scripts": {
     "collect": "tsx --no-deprecation src/main.ts",
     "collect:dry": "tsx --no-deprecation src/main.ts --dry-run",
+    "digest": "tsx --no-deprecation src/digest-main.ts",
+    "digest:dry": "tsx --no-deprecation src/digest-main.ts --dry-run",
     "test": "vitest",
     "test:run": "vitest run",
     "lint": "biome lint .",

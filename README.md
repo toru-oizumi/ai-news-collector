@@ -1,64 +1,72 @@
 # AI News Collector
 
 Automatically collects the latest AI/ML news and stores it in a Notion Database.
+Runs two daily jobs: **collect** (fetch & summarize) and **digest** (detailed analysis + full translation).
 
-AI/ML 関連の最新ニュースを自動収集して Notion Database に蓄積するツール。
-
-## Architecture / アーキテクチャ
+## Architecture
 
 ```text
-GitHub Actions (cron: daily 09:00 JST)
+[Job 1: collect]  every 6h (00:00 / 06:00 / 12:00 / 18:00 UTC)
 ├─ Fetch (parallel)
 │  ├─ RSS: OpenAI, DeepMind, Google AI, Meta AI, NVIDIA, AWS, arXiv
 │  ├─ HTML Scrape: Anthropic (news + engineering)
-│  ├─ API: Hacker News (Algolia), HuggingFace Daily Papers
-│  └─ (extensible: GitHub Trending, Mistral, xAI, etc.)
+│  └─ API: Hacker News (Algolia), HuggingFace Daily Papers
 ├─ Dedup (URL normalization)
 ├─ Score & Categorize (source weight + keyword bonus)
 ├─ Notion Dedup (exclude existing URLs)
-├─ Summarize (Mistral Small free tier → Japanese summary)
-└─ Push to Notion Database
+├─ Summarize (Mistral Small → short Japanese summary, 2-3 sentences)
+└─ Push to Notion Database (Status: "Unread")
+
+[Job 2: digest]  2h after each collect run
+├─ Query Notion (Status="Unread", top 30 by Score)
+├─ Fetch article body (cheerio HTML scraper)
+├─ Generate Digest (Mistral → Japanese summary 400-600 chars + Key Points)
+├─ Translate (Mistral → full Japanese translation)
+├─ Write to Notion page body:
+│     📝 Digest
+│     ■ Key Points
+│     ─────────
+│     🇯🇵 日本語全文訳
+└─ Update Status: "Unread" → "Digested"
 ```
 
-## Setup / セットアップ
+## Setup
 
 ### 1. Notion
 
-1. Create a [Notion Integration](https://www.notion.so/my-integrations) and get the API Key
-   / [Notion Integration](https://www.notion.so/my-integrations) を作成し、API Key を取得
-2. Create a new Notion Database with the following properties / 以下のプロパティで Database を作成:
+1. Create a [Notion Integration](https://www.notion.so/my-integrations) and copy the API Key.
+2. Create a new Notion Database with the following properties:
 
-| Property / プロパティ | Type / 型 | Notes / 備考 |
+| Property | Type | Notes |
 |---|---|---|
-| Title | Title | Default title column / デフォルトタイトル列 |
+| Title | Title | Default title column |
 | URL | URL | |
 | Source | Select | |
 | Category | Multi-select | |
 | Score | Number | |
-| Summary | Rich text | |
+| Summary | Rich text | Short 2-3 sentence summary (Job 1) |
 | Published | Date | |
 | Fetched | Date | |
-| Status | Select | Unread / Read / Starred |
+| Status | Select | **Unread** / **Digested** / Read / Starred |
 
-1. Connect the Integration to the Database (••• → Connections → add your Integration)
-   / Database ページで Integration を接続（右上 ••• → Connections → 作成した Integration を追加）
+1. Connect the Integration to the Database (••• → Connections → add your Integration).
 1. Copy the Database ID from the URL: `https://www.notion.so/<DATABASE_ID>?v=...`
+
+> **Note:** Add **"Digested"** as a Status option so Job 2 can update processed articles.
 
 ### 2. Mistral API
 
-1. Get a free API Key from [Mistral AI Console](https://console.mistral.ai/) → API Keys (no credit card required)
-   / [Mistral AI Console](https://console.mistral.ai/) → API Keys で無料 API Key を取得（クレカ不要）
+Get a free API Key from [Mistral AI Console](https://console.mistral.ai/) → API Keys (no credit card required).
 
 ### 3. GitHub
 
-1. Fork this repo (or create a private repo) / このリポジトリを Fork
-2. Set the following secrets under Settings → Secrets and variables → Actions:
-   / Settings → Secrets and variables → Actions で以下を設定:
+1. Fork this repo (or create a private repo).
+2. Add the following secrets under Settings → Secrets and variables → Actions:
    - `NOTION_API_KEY`
    - `NOTION_DATABASE_ID`
    - `MISTRAL_API_KEY`
 
-### 4. Local Setup / ローカルセットアップ
+### 4. Local Setup
 
 ```bash
 # Install Node.js 24 via mise
@@ -73,11 +81,14 @@ cp .env.example .env
 # Dry run (no Notion/Mistral calls)
 npm run collect:dry
 
-# Full run
+# Full collect run
 npm run collect
+
+# Digest + translate run (requires Notion articles with Status="Unread")
+npm run digest
 ```
 
-## Development / 開発
+## Development
 
 ```bash
 npm test            # vitest watch mode
@@ -88,39 +99,39 @@ npm run typecheck   # TypeScript type check
 
 VS Code: open **Run and Debug** (⇧⌘D) and select `collect: dry-run` to debug with breakpoints.
 
-## Customization / カスタマイズ
+## Customization
 
-### Adding / Removing Sources / ソースの追加・削除
+### Adding / Removing Sources
 
 Edit `RSS_SOURCES` in `src/config.ts`. You can add keyword filters:
-/ `src/config.ts` の `RSS_SOURCES` を編集。keyword フィルタ付きで追加可能:
 
 ```ts
 { name: "NVIDIA", url: "https://blogs.nvidia.com/feed/", keywords: ["ai", "llm"] }
 ```
 
-### Scoring / スコアリング調整
+### Scoring
 
 Edit `SCORE_CONFIG` in `src/config.ts`:
-/ `src/config.ts` の `SCORE_CONFIG` で:
 
-- `sourceWeights`: base score per source / ソースごとの基本スコア
-- `keywordBonus`: bonus on keyword match / キーワードマッチ時のボーナス
-- `minScore`: filter threshold / フィルタ閾値
+- `sourceWeights`: base score per source
+- `keywordBonus`: bonus on keyword match
+- `minScore`: filter threshold
 
-### Category Rules / カテゴリルール
+### Category Rules
 
 Edit `CATEGORY_RULES` in `src/pipeline/scorer.ts`.
 
-## Cost / コスト
+## Cost
 
-All within free tiers / すべて無料枠内:
+All within free tiers:
 
-| Service | Free Tier | Usage |
-|---|---|---|
-| GitHub Actions | 2,000 min/month (private) | ~150 min/month |
-| Mistral API | 1B tokens/month, 2 RPM (free Experiment plan) | ~80 articles/day |
-| Notion API | Free plan | — |
+| Service | Free Tier | Job 1 usage | Job 2 usage |
+|---|---|---|---|
+| GitHub Actions | 2,000 min/month (private) | ~150 min/month | ~180 min/month |
+| Mistral API | 1B tokens/month, 2 RPM | ~1.2M tokens/month | ~16M tokens/month |
+| Notion API | Free plan | — | — |
+
+**Total Mistral: ~17M tokens/month ≈ 1.7% of the 1B free tier.**
 
 ## License
 
