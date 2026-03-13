@@ -1,4 +1,4 @@
-import { Client } from "@notionhq/client";
+import { APIResponseError, Client } from "@notionhq/client";
 import { MISTRAL_CONFIG, env } from "./config.js";
 import { generateDigest } from "./digest/digest.js";
 import { fetchArticleBody } from "./digest/fetcher.js";
@@ -11,16 +11,41 @@ interface ArticleRow {
   url: string;
 }
 
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
+
+async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isRateLimit = err instanceof APIResponseError && err.status === 429;
+      const hasRetry = attempt < RETRY_DELAYS_MS.length;
+      if (isRateLimit && hasRetry) {
+        const delay = RETRY_DELAYS_MS[attempt];
+        console.warn(`[Notion] Rate limited on "${label}" — retrying in ${delay / 1000}s...`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("withRetry: exhausted retries");
+}
+
 async function queryUnreadArticles(notion: Client): Promise<ArticleRow[]> {
-  const res = await notion.databases.query({
-    database_id: env.NOTION_DATABASE_ID,
-    filter: {
-      property: "Status",
-      select: { equals: "Unread" },
-    },
-    sorts: [{ property: "Score", direction: "descending" }],
-    page_size: 30,
-  });
+  const res = await withRetry(
+    () =>
+      notion.databases.query({
+        database_id: env.NOTION_DATABASE_ID,
+        filter: {
+          property: "Status",
+          select: { equals: "Unread" },
+        },
+        sorts: [{ property: "Score", direction: "descending" }],
+        page_size: 30,
+      }),
+    "databases.query"
+  );
 
   return res.results
     .filter((p): p is Extract<typeof p, { properties: unknown }> => "properties" in p)
@@ -46,6 +71,15 @@ async function main() {
   const startTime = Date.now();
   console.log("=== AI News Digest + Translate ===");
   console.log(`Time: ${new Date().toISOString()}`);
+  console.log(`Mode: ${env.DRY_RUN ? "DRY RUN" : "LIVE"}`);
+
+  if (env.DRY_RUN) {
+    console.log(
+      "[DRY RUN] Would query Notion for Unread articles, generate digests/translations, and write to Notion pages."
+    );
+    console.log("[DRY RUN] No API calls made.");
+    return;
+  }
 
   if (!env.NOTION_API_KEY || !env.NOTION_DATABASE_ID || !env.MISTRAL_API_KEY) {
     console.error("Missing required env vars: NOTION_API_KEY, NOTION_DATABASE_ID, MISTRAL_API_KEY");
@@ -68,6 +102,7 @@ async function main() {
   console.log("\n[2/4] Processing articles...");
   let success = 0;
   let fail = 0;
+  let mistralAttempts = 0; // articles that reached Mistral API calls
   let digestTokens = 0;
   let translateTokens = 0;
 
@@ -82,6 +117,8 @@ async function main() {
       continue;
     }
     console.log(`   → Fetched ${paragraphs.length} paragraphs`);
+
+    mistralAttempts++;
 
     // 2b. Generate digest (1 API call)
     console.log("   → Generating digest...");
@@ -98,8 +135,9 @@ async function main() {
     translateTokens += tTokens;
     await sleep(MISTRAL_CONFIG.delayMs);
 
-    if (!digestResult && translated.length === 0) {
-      console.log("   → Both digest and translation failed, skipping");
+    // Skip only if both failed
+    if (!digestResult || translated.length === 0) {
+      console.log("   → Digest or translation failed, skipping");
       fail++;
       continue;
     }
@@ -110,18 +148,24 @@ async function main() {
       await writeDigestToPage(
         notion,
         article.pageId,
-        digestResult?.digest ?? "(Digest generation failed)",
-        digestResult?.keyPoints ?? [],
+        digestResult.digest,
+        digestResult.keyPoints,
         translated
       );
 
-      // Update Status to "Digested" to prevent re-processing
-      await notion.pages.update({
-        page_id: article.pageId,
-        properties: {
-          Status: { select: { name: "Digested" } },
-        },
-      });
+      // Small delay before status update to respect Notion rate limit
+      await new Promise((r) => setTimeout(r, 350));
+
+      await withRetry(
+        () =>
+          notion.pages.update({
+            page_id: article.pageId,
+            properties: {
+              Status: { select: { name: "Digested" } },
+            },
+          }),
+        article.title
+      );
 
       console.log("   → Done");
       success++;
@@ -134,15 +178,14 @@ async function main() {
   // 3. Summary log with token usage
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   const totalTokens = digestTokens + translateTokens;
-  const processed = success + fail;
 
-  console.log(`\n[4/4] Done in ${elapsed}s: ${success} success, ${fail} failed`);
+  console.log("\n[3/4] Token usage:");
   console.log(
     `[Digest] Tokens — digest: ${digestTokens.toLocaleString()}, translate: ${translateTokens.toLocaleString()}, total: ${totalTokens.toLocaleString()}`
   );
-  if (processed > 0) {
+  if (mistralAttempts > 0) {
     console.log(
-      `[Digest] Avg tokens/article — digest: ${Math.round(digestTokens / processed).toLocaleString()}, translate: ${Math.round(translateTokens / processed).toLocaleString()}`
+      `[Digest] Avg tokens/article — digest: ${Math.round(digestTokens / mistralAttempts).toLocaleString()}, translate: ${Math.round(translateTokens / mistralAttempts).toLocaleString()}`
     );
   }
   // Monthly estimate: 30 days × 4 runs/day (every 6h, same cadence as collect)
@@ -151,6 +194,8 @@ async function main() {
   console.log(
     `[Digest] Monthly estimate: ~${monthlyEstimate.toLocaleString()} tokens (${freeTierPct}% of 1B free tier)`
   );
+
+  console.log(`\n[4/4] Done in ${elapsed}s: ${success} success, ${fail} failed`);
 }
 
 main().catch((err) => {

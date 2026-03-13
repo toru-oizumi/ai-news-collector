@@ -26,6 +26,10 @@ export async function callMistral(
   userPrompt: string,
   maxTokens: number
 ): Promise<MistralResult> {
+  if (!env.MISTRAL_API_KEY) {
+    throw new Error("MISTRAL_API_KEY is not set");
+  }
+
   const res = await fetch(MISTRAL_CONFIG.apiUrl, {
     method: "POST",
     headers: {

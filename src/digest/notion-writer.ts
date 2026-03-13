@@ -1,5 +1,26 @@
-import type { Client } from "@notionhq/client";
+import { APIResponseError, type Client } from "@notionhq/client";
 import type { BlockObjectRequest } from "@notionhq/client/build/src/api-endpoints.js";
+
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isRateLimit = err instanceof APIResponseError && err.status === 429;
+      const hasRetry = attempt < RETRY_DELAYS_MS.length;
+      if (isRateLimit && hasRetry) {
+        const delay = RETRY_DELAYS_MS[attempt];
+        console.warn(`[NotionWriter] Rate limited — retrying in ${delay / 1000}s...`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("withRetry: exhausted retries");
+}
 
 /**
  * Append Digest + full Japanese translation to a Notion page body.
@@ -85,10 +106,12 @@ export async function writeDigestToPage(
   // Notion API allows max 100 blocks per append call — split into chunks if needed
   for (let i = 0; i < blocks.length; i += 100) {
     const chunk = blocks.slice(i, i + 100);
-    await notion.blocks.children.append({
-      block_id: pageId,
-      children: chunk,
-    });
+    await withRetry(() =>
+      notion.blocks.children.append({
+        block_id: pageId,
+        children: chunk,
+      })
+    );
     // Notion rate limit: 3 req/sec
     if (i + 100 < blocks.length) {
       await new Promise((r) => setTimeout(r, 350));

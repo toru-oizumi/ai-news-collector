@@ -54,6 +54,7 @@ export async function summarizeOne(article: Article): Promise<number> {
         return tokens;
       } catch {
         // Give up on this article — summary stays empty
+        await sleep(MISTRAL_CONFIG.delayMs);
         return 0;
       }
     }
