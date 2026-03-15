@@ -32,10 +32,8 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
   { name: "AWS ML", url: "https://aws.amazon.com/blogs/ai/feed/" },
 
   // Tier 3: Model releases
-  {
-    name: "Mistral",
-    url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_mistral.xml",
-  },
+  // NOTE: Mistral has no Olshansk mirror and no verified official RSS feed.
+  // Add back when a reliable feed URL is confirmed (e.g. https://mistral.ai/news/rss.xml).
   {
     name: "xAI",
     url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_xainews.xml",
@@ -59,7 +57,7 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
   },
   {
     name: "Windsurf",
-    url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_windsurf.xml",
+    url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_windsurf_blog.xml",
   },
   {
     name: "GitHub Blog",
