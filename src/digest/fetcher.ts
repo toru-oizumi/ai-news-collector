@@ -1,11 +1,31 @@
 import * as cheerio from "cheerio";
 import { chromium } from "playwright";
+import type { Browser, Page } from "playwright";
 
 /**
  * Domains that require a headless browser (JS-rendered content).
  * Add new domains here when cheerio-based fetch returns empty body.
+ * Note: headless fetches share a single browser instance (see getBrowser/closeBrowser).
  */
 const HEADLESS_DOMAINS = ["openai.com"];
+
+// Module-level browser instance, lazily initialized and reused across calls.
+let _browser: Browser | null = null;
+
+async function getBrowser(): Promise<Browser> {
+  if (!_browser) {
+    _browser = await chromium.launch({ headless: true });
+  }
+  return _browser;
+}
+
+/** Close the shared headless browser. Call once after all fetches are complete. */
+export async function closeBrowser(): Promise<void> {
+  if (_browser) {
+    await _browser.close();
+    _browser = null;
+  }
+}
 
 function needsHeadless(url: string): boolean {
   try {
@@ -29,11 +49,13 @@ export async function fetchArticleBody(url: string, maxChars = 12000): Promise<s
 }
 
 async function fetchWithHeadless(url: string, maxChars: number): Promise<string[]> {
-  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  let page: Page | undefined;
   try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-    await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
+    const browser = await getBrowser();
+    page = await browser.newPage();
+    // Use "domcontentloaded" instead of "networkidle" — SPAs with background
+    // requests can keep network busy indefinitely, causing consistent timeouts.
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     const html = await page.content();
     return extractParagraphs(html, maxChars);
   } catch (err) {
@@ -42,7 +64,7 @@ async function fetchWithHeadless(url: string, maxChars: number): Promise<string[
     );
     return [];
   } finally {
-    await browser?.close();
+    await page?.close();
   }
 }
 

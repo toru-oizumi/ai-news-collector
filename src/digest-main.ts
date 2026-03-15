@@ -1,7 +1,7 @@
 import { APIResponseError, Client } from "@notionhq/client";
 import { MISTRAL_CONFIG, env } from "./config.js";
 import { generateDigest } from "./digest/digest.js";
-import { fetchArticleBody } from "./digest/fetcher.js";
+import { closeBrowser, fetchArticleBody } from "./digest/fetcher.js";
 import { writeDigestToPage } from "./digest/notion-writer.js";
 import { translateArticle } from "./digest/translator.js";
 
@@ -196,6 +196,8 @@ async function main() {
   );
 
   console.log(`\n[4/4] Done in ${elapsed}s: ${success} success, ${fail} failed`);
+
+  await closeBrowser();
 }
 
 main().catch((err) => {
