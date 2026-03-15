@@ -1,4 +1,4 @@
-import type { RSSSourceConfig } from "./types.js";
+import type { RSSSourceConfig, Source } from "./types.js";
 
 // ── Environment variables ──
 export const env = {
@@ -148,7 +148,7 @@ export const SCORE_CONFIG = {
     "GitHub Blog": 50,
     LangChain: 50,
     Vercel: 40,
-  } satisfies Record<string, number>,
+  } satisfies Record<Source, number>,
 
   /** Bonus keywords (additive) */
   keywordBonus: [
