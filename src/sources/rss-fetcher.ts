@@ -31,7 +31,7 @@ export function createRSSFetcher(config: RSSSourceConfig): Fetcher {
             category: [],
             score: 0,
             summary: "",
-            publishedAt: item.pubDate ? new Date(item.pubDate) : null,
+            publishedAt: parseDate(item.pubDate),
             fetchedAt: new Date(),
             abstract: (item.contentSnippet ?? item.content ?? "").slice(0, 1000),
           };
@@ -42,6 +42,12 @@ export function createRSSFetcher(config: RSSSourceConfig): Fetcher {
       return articles;
     },
   };
+}
+
+function parseDate(value: string | undefined): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function normalizeUrl(url: string): string {

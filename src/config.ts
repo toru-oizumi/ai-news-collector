@@ -1,4 +1,4 @@
-import type { RSSSourceConfig } from "./types.js";
+import type { RSSSourceConfig, Source } from "./types.js";
 
 // ── Environment variables ──
 export const env = {
@@ -148,7 +148,7 @@ export const SCORE_CONFIG = {
     "GitHub Blog": 50,
     LangChain: 50,
     Vercel: 40,
-  } satisfies Record<string, number>,
+  } satisfies Record<Source, number>,
 
   /** Bonus keywords (additive) */
   keywordBonus: [
@@ -168,7 +168,7 @@ export const SCORE_CONFIG = {
 export const MISTRAL_CONFIG = {
   model: "mistral-small-latest",
   apiUrl: "https://api.mistral.ai/v1/chat/completions",
-  /** Max articles to summarise per run (50 x ~32s = ~27min, fits in 30min timeout) */
+  /** Max articles to summarise per run (50 x ~32s = ~27min, fits in 45min timeout) */
   maxSummarize: 50,
   /** Delay between requests (ms) — free tier is 2 RPM, so 31s interval */
   delayMs: 31_000, // ~1.9 RPM, safe under 2 RPM limit
