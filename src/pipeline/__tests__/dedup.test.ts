@@ -54,6 +54,16 @@ describe("dedup", () => {
     expect(result[0].score).toBe(90);
   });
 
+  it("prefers the crowd-backed duplicate when scores are still 0 (pre-scoring)", () => {
+    // dedup runs before scoring, so both articles have score 0; the one with a
+    // crowd signal (e.g. it also appeared on HN) should win.
+    const bare: Article = { ...makeArticle("https://example.com/post"), crowdScore: undefined };
+    const crowded: Article = { ...makeArticle("https://example.com/post"), crowdScore: 120 };
+    const result = dedup([bare, crowded]);
+    expect(result).toHaveLength(1);
+    expect(result[0].crowdScore).toBe(120);
+  });
+
   it("keeps distinct URLs", () => {
     const articles = [
       makeArticle("https://example.com/post-1"),

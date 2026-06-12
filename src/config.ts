@@ -8,6 +8,42 @@ export const env = {
   DRY_RUN: process.argv.includes("--dry-run"),
 } as const;
 
+// ── Shared AI/ML keyword list ──
+// Used to filter general-interest sources (HN, Lobsters, Changelog, GitHub Trending)
+// down to AI-relevant items. Keywords of 3 chars or fewer are matched as whole words.
+export const AI_KEYWORDS = [
+  "ai",
+  "llm",
+  "gpt",
+  "claude",
+  "gemini",
+  "llama",
+  "mistral",
+  "qwen",
+  "language model",
+  "machine learning",
+  "neural",
+  "transformer",
+  "diffusion",
+  "open source model",
+  "agent",
+  "agentic",
+  "mcp",
+  "anthropic",
+  "openai",
+  "deepmind",
+  "hugging face",
+  "huggingface",
+  "inference",
+  "fine-tun",
+  "rlhf",
+  "embedding",
+  "vector",
+  "copilot",
+  "prompt",
+  "rag",
+];
+
 // ── RSS Sources (Tier 1 + Tier 2) ──
 export const RSS_SOURCES: RSSSourceConfig[] = [
   // Tier 1: Major providers
@@ -72,6 +108,34 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
     url: "https://vercel.com/atom",
     keywords: ["ai", "v0", "sdk"],
   },
+
+  // Tier 4: Practitioner / curation (added in Phase 1 to counter academic bias)
+  // Personal blog of Simon Willison — high-signal LLM + dev tooling commentary.
+  { name: "Simon Willison", url: "https://simonwillison.net/atom/everything/" },
+  // Jack Clark's weekly AI newsletter (Substack standard feed).
+  { name: "Import AI", url: "https://importai.substack.com/feed" },
+  // AI engineering podcast/newsletter (Substack). NOTE: RSS may truncate body — verify in prod.
+  { name: "Latent Space", url: "https://www.latent.space/feed" },
+  // General dev/OSS — keyword-filtered to AI-relevant items. Feed URL to verify in first prod run.
+  { name: "Changelog", url: "https://changelog.com/feed", keywords: AI_KEYWORDS },
+
+  // Tier 4: GitHub Trending (unofficial RSS generator, gh-pages — best-effort, AI-filtered)
+  // URL pattern: https://mshibanami.github.io/GitHubTrendingRSS/daily/{language}.xml
+  {
+    name: "GitHub Trending",
+    url: "https://mshibanami.github.io/GitHubTrendingRSS/daily/go.xml",
+    keywords: AI_KEYWORDS,
+  },
+  {
+    name: "GitHub Trending",
+    url: "https://mshibanami.github.io/GitHubTrendingRSS/daily/typescript.xml",
+    keywords: AI_KEYWORDS,
+  },
+  {
+    name: "GitHub Trending",
+    url: "https://mshibanami.github.io/GitHubTrendingRSS/daily/python.xml",
+    keywords: AI_KEYWORDS,
+  },
 ];
 
 // ── Anthropic (no official RSS — scrape from news + engineering pages) ──
@@ -89,33 +153,19 @@ export const HN_CONFIG = {
   maxItems: 30,
   /** Post-fetch title filter — article must contain at least one of these.
    *  Keywords of 3 chars or fewer are matched as whole words (\b boundary). */
-  titleKeywords: [
-    "ai",
-    "llm",
-    "gpt",
-    "claude",
-    "gemini",
-    "llama",
-    "mistral",
-    "language model",
-    "machine learning",
-    "neural",
-    "transformer",
-    "diffusion",
-    "open source model",
-    "agent",
-    "anthropic",
-    "openai",
-    "deepmind",
-    "hugging face",
-    "huggingface",
-    "inference",
-    "fine-tun",
-    "rlhf",
-    "embedding",
-    "vector",
-    "copilot",
-  ],
+  titleKeywords: AI_KEYWORDS,
+};
+
+// ── Lobsters ──
+export const LOBSTERS_CONFIG = {
+  /** Front-page "hottest" stories as JSON. Each story exposes a `score` (votes). */
+  url: "https://lobste.rs/hottest.json",
+  /** Keep only stories with at least this many votes. */
+  minScore: 5,
+  maxItems: 20,
+  /** Lobsters tags that are inherently AI-relevant — story is kept if it carries any of these,
+   *  OR if its title/description matches AI_KEYWORDS. */
+  aiTags: ["ai", "ml", "nlp"],
 };
 
 // ── HuggingFace Daily Papers ──
@@ -131,9 +181,12 @@ export const SCORE_CONFIG = {
     "Google AI": 70,
     "Meta AI": 70,
     NVIDIA: 50,
-    arXiv: 40,
-    HuggingFace: 60,
-    "Hacker News": 0, // uses HN score directly
+    // Academic sources lowered in Phase 1 to counter research/SOTA bias.
+    arXiv: 25,
+    HuggingFace: 35,
+    // Crowd-scored sources get a modest base; the crowd bonus does the ranking.
+    "Hacker News": 20,
+    Lobsters: 30,
     "GitHub Trending": 50,
     Mistral: 70,
     xAI: 60,
@@ -146,20 +199,51 @@ export const SCORE_CONFIG = {
     "GitHub Blog": 50,
     LangChain: 50,
     Vercel: 40,
+    // Practitioner / curation sources (Phase 1)
+    "Simon Willison": 65,
+    "Latent Space": 60,
+    "Import AI": 55,
+    Changelog: 50,
   } satisfies Record<Source, number>,
 
   /** Bonus keywords (additive) */
   keywordBonus: [
     { keywords: ["gpt-5", "gpt-6", "claude", "gemini", "llama"], bonus: 20 },
-    { keywords: ["agent", "agentic", "tool use", "function calling"], bonus: 15 },
+    { keywords: ["agent", "agentic", "tool use", "function calling", "mcp"], bonus: 15 },
     { keywords: ["open source", "open-source", "weights released"], bonus: 15 },
-    { keywords: ["benchmark", "sota", "state-of-the-art"], bonus: 10 },
+    // Practitioner / dev-tooling signal (Phase 1) — lifts hands-on content.
+    {
+      keywords: ["dev tool", "developer", "productivity", "observability", "workers", "d1", "r2"],
+      bonus: 12,
+    },
     { keywords: ["rag", "retrieval"], bonus: 10 },
     { keywords: ["safety", "alignment", "red team"], bonus: 10 },
+    // De-emphasize pure benchmark/SOTA framing (Phase 1: was +10, now neutral-ish).
+    { keywords: ["benchmark", "sota", "state-of-the-art"], bonus: 5 },
   ],
+
+  /** Crowd-signal normalization (Phase 1).
+   *  crowdBonus = min(maxBonus, round(weight * log10(crowdScore * scale + 1)))
+   *  Sources are on very different vote scales, so `scale` aligns them before the log. */
+  crowd: {
+    weight: 18,
+    maxBonus: 60,
+    /** Per-source multiplier applied before the log. Lobsters votes are ~1/5 of HN points. */
+    scale: {
+      "Hacker News": 1,
+      Lobsters: 5,
+    } as Partial<Record<Source, number>>,
+    defaultScale: 1,
+  },
 
   /** Minimum score to keep an article */
   minScore: 30,
+
+  /** Max articles kept per source in the final selection (Phase 1).
+   *  Prevents a single high-volume, high-base source (e.g. OpenAI returns ~1000 items,
+   *  all scoring 100+) from monopolizing the limited summarize slots and burying
+   *  crowd-validated / practitioner content that scores just below it. */
+  maxPerSource: 8,
 };
 
 // ── Mistral ──

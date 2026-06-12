@@ -8,12 +8,14 @@ Runs two daily jobs: **collect** (fetch & summarize) and **digest** (detailed an
 ```text
 [Job 1: collect]  every 6h (00:00 / 06:00 / 12:00 / 18:00 UTC)
 ├─ Fetch (parallel)
-│  ├─ RSS: OpenAI, DeepMind, Google AI, Meta AI, NVIDIA, AWS, arXiv
+│  ├─ RSS: OpenAI, DeepMind, Google AI, Meta AI, NVIDIA, AWS, arXiv,
+│  │        + practitioner: Simon Willison, Import AI, Latent Space, Changelog, GitHub Trending
 │  ├─ HTML Scrape: Anthropic (news + engineering)
-│  └─ API: Hacker News (Algolia), HuggingFace Daily Papers
-├─ Dedup (URL normalization)
-├─ Score & Categorize (source weight + keyword bonus)
+│  └─ API: Hacker News (Algolia), HuggingFace Daily Papers, Lobsters (hottest.json)
+├─ Dedup (URL normalization; crowd-backed duplicate wins)
+├─ Score & Categorize (source weight + keyword bonus + normalized crowd score)
 ├─ Notion Dedup (exclude existing URLs)
+├─ Select (per-source cap so one high-volume source can't fill every slot)
 ├─ Summarize (Mistral Small → short Japanese summary, 2-3 sentences)
 └─ Push to Notion Database (Status: "Unread")
 
@@ -115,7 +117,16 @@ Edit `SCORE_CONFIG` in `src/config.ts`:
 
 - `sourceWeights`: base score per source
 - `keywordBonus`: bonus on keyword match
+- `crowd`: how vote counts (HN points, Lobsters score) are normalized into the score
+  (`crowdBonus = min(maxBonus, weight × log10(crowdScore × scale + 1))`)
 - `minScore`: filter threshold
+- `maxPerSource`: cap on how many articles a single source contributes to the
+  final summarize set, so a high-volume source (e.g. OpenAI returns ~1000 items)
+  can't monopolize every slot and bury lower-scoring practitioner/crowd content
+
+Crowd-scored sources (Hacker News, Lobsters) expose `crowdScore` on each article;
+academic sources (arXiv, HuggingFace) carry a deliberately lower base weight so
+practitioner and crowd-validated content ranks higher.
 
 ### Category Rules
 

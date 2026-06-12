@@ -9,6 +9,9 @@ export interface Article {
   publishedAt: Date | null;
   fetchedAt: Date;
   abstract: string; // original abstract / description
+  /** Crowd signal (votes/points) where the source provides it — HN points, Lobsters score, etc.
+   *  Normalized into the final score by the scorer. Undefined when the source has no crowd signal. */
+  crowdScore?: number;
 }
 
 export type Source =
@@ -32,7 +35,12 @@ export type Source =
   | "Windsurf"
   | "GitHub Blog"
   | "LangChain"
-  | "Vercel";
+  | "Vercel"
+  | "Lobsters"
+  | "Simon Willison"
+  | "Latent Space"
+  | "Import AI"
+  | "Changelog";
 
 export type Category =
   | "LLM"
