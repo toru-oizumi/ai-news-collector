@@ -1,11 +1,12 @@
 import { MISTRAL_CONFIG, RSS_SOURCES, env } from "./config.js";
 import { getExistingUrls, pushOneToNotion } from "./notion/client.js";
 import { dedup } from "./pipeline/dedup.js";
-import { scoreAndFilter } from "./pipeline/scorer.js";
+import { scoreAndFilter, selectDiverse } from "./pipeline/scorer.js";
 import { summarizeOne } from "./pipeline/summarizer.js";
 import { anthropicFetcher } from "./sources/anthropic-scraper.js";
 import { hackerNewsFetcher } from "./sources/hackernews.js";
 import { huggingFaceFetcher } from "./sources/huggingface.js";
+import { lobstersFetcher } from "./sources/lobsters.js";
 import { createRSSFetcher } from "./sources/rss-fetcher.js";
 import type { Article, Fetcher } from "./types.js";
 
@@ -24,6 +25,7 @@ async function main() {
     anthropicFetcher,
     hackerNewsFetcher,
     huggingFaceFetcher,
+    lobstersFetcher,
   ];
 
   const fetchResults = await Promise.allSettled(
@@ -74,13 +76,15 @@ async function main() {
   }
 
   // ── Step 5: Process article by article (summarize → push) ──
-  const toProcess = articles.slice(0, MISTRAL_CONFIG.maxSummarize);
+  // Cap per-source representation so one high-volume source can't fill every slot.
+  const toProcess = selectDiverse(articles, MISTRAL_CONFIG.maxSummarize);
 
   if (env.DRY_RUN) {
     console.log("\n[5/5] Skipping Mistral summarization (dry-run)");
     console.log("\n=== DRY RUN RESULTS ===");
     for (const a of toProcess.slice(0, 20)) {
-      console.log(`\n[${a.source}] (score: ${a.score}) ${a.title}`);
+      const crowd = a.crowdScore !== undefined ? ` crowd: ${a.crowdScore}` : "";
+      console.log(`\n[${a.source}] (score: ${a.score}${crowd}) ${a.title}`);
       console.log(`  URL: ${a.url}`);
       console.log(`  Categories: ${a.category.join(", ")}`);
     }

@@ -56,11 +56,12 @@ export const hackerNewsFetcher: Fetcher = {
             url: hit.url,
             source: "Hacker News",
             category: [],
-            score: hit.points, // will be used directly
+            score: 0, // computed by the scorer from base weight + keyword + crowd bonus
             summary: "",
             publishedAt: new Date(hit.created_at),
             fetchedAt: new Date(),
             abstract: hit.story_text?.slice(0, 500) ?? "",
+            crowdScore: hit.points, // upvotes — normalized by the scorer
           });
         }
       } catch (err) {

@@ -7,20 +7,54 @@ import type { Article, Category } from "../types.js";
  */
 export function scoreAndFilter(articles: Article[]): Article[] {
   for (const article of articles) {
-    // HN articles already have a meaningful score (points)
-    if (article.source === "Hacker News") {
-      article.score = Math.min(article.score, 200); // cap
-    } else {
-      const base = SCORE_CONFIG.sourceWeights[article.source] ?? 30;
-      const bonus = calcKeywordBonus(article);
-      article.score = base + bonus;
-    }
+    // Unified composition: base source weight + keyword bonus + normalized crowd signal.
+    const base = SCORE_CONFIG.sourceWeights[article.source] ?? 30;
+    const bonus = calcKeywordBonus(article);
+    const crowd = calcCrowdBonus(article);
+    article.score = base + bonus + crowd;
 
     // Auto-categorize
     article.category = categorize(article);
   }
 
   return articles.filter((a) => a.score >= SCORE_CONFIG.minScore).sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Pick up to `limit` articles for downstream processing while keeping source variety.
+ * Caps each source to `maxPerSource` so one high-volume source (e.g. OpenAI's ~1000
+ * items, all scoring 100+) can't fill every slot and bury crowd/practitioner content
+ * that scores just below it. Falls back to filling remaining slots ignoring the cap
+ * if too few sources are present. Input is assumed already sorted by score descending.
+ */
+export function selectDiverse(
+  articles: Article[],
+  limit: number,
+  maxPerSource = SCORE_CONFIG.maxPerSource
+): Article[] {
+  const perSource = new Map<string, number>();
+  const picked: Article[] = [];
+  const overflow: Article[] = [];
+
+  for (const article of articles) {
+    if (picked.length >= limit) break;
+    const count = perSource.get(article.source) ?? 0;
+    if (count < maxPerSource) {
+      perSource.set(article.source, count + 1);
+      picked.push(article);
+    } else {
+      overflow.push(article);
+    }
+  }
+
+  // If the per-source cap left us short of `limit`, top up with the highest-scoring
+  // leftovers (still in score order) so we never under-fill the available slots.
+  for (const article of overflow) {
+    if (picked.length >= limit) break;
+    picked.push(article);
+  }
+
+  return picked.sort((a, b) => b.score - a.score);
 }
 
 function calcKeywordBonus(article: Article): number {
@@ -34,6 +68,21 @@ function calcKeywordBonus(article: Article): number {
   }
 
   return bonus;
+}
+
+/**
+ * Normalize a source's crowd signal (votes/points) into score points.
+ * Uses a log scale so a 10x vote difference does not 10x the score, and a
+ * per-source scale so HN points and Lobsters scores are comparable.
+ */
+export function calcCrowdBonus(article: Article): number {
+  const raw = article.crowdScore;
+  if (raw === undefined || raw <= 0) return 0;
+
+  const { weight, maxBonus, scale, defaultScale } = SCORE_CONFIG.crowd;
+  const sourceScale = scale[article.source] ?? defaultScale;
+  const bonus = Math.round(weight * Math.log10(raw * sourceScale + 1));
+  return Math.min(maxBonus, bonus);
 }
 
 const CATEGORY_RULES: { keywords: string[]; category: Category }[] = [
