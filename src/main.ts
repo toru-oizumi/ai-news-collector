@@ -128,7 +128,13 @@ async function main() {
   console.log(`\n=== Done in ${elapsed}s ===`);
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+main()
+  // Force a clean exit on success. `npm run collect` runs via tsx (esbuild
+  // service), which leaves an open handle that keeps the event loop alive
+  // after main() resolves — without this the process hangs until the CI job
+  // timeout cancels it. See TOR-44.
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("Fatal error:", err);
+    process.exit(1);
+  });
