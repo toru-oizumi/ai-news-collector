@@ -31,6 +31,7 @@
 ## 各ソースの調査詳細
 
 ### Lobsters (`hottest.json`)
+
 - レスポンスは story オブジェクトの JSON 配列。
 - 確認できた主なフィールド: `short_id`, `short_id_url`, `created_at`, `title`,
   `url`, **`score`**（票数）, `flags`, **`comment_count`**, `description`,
@@ -40,6 +41,7 @@
   AI キーワードにマッチするもののみ採用する（HN と同じ方針）。
 
 ### Hacker News (Algolia) — 既存
+
 - `src/sources/hackernews.ts` を確認。レスポンスの各 hit は `points` と
   `num_comments` を**既に取得済み**。現状は `score = points` を直接スコアに使用。
 - `Show HN` 絞り込み: Algolia は `tags=show_hn`（または `tags=story,show_hn`）で
@@ -47,10 +49,12 @@
 - → Phase 1 では `points` を共通 `crowdScore` に載せ替え、スコア合成を統一する。
 
 ### Simon Willison
+
 - `https://simonwillison.net/atom/everything/` が Atom フィード（rss/タグ参照で確認）。
 - LLM / dev tooling / 実務トピックの宝庫。crowd score は無い。全件取り込み。
 
 ### Import AI / Latent Space (Substack)
+
 - Substack は `<base>/feed` で標準 RSS を提供。
   - Import AI: `https://importai.substack.com/feed`
   - Latent Space: `https://www.latent.space/feed`
@@ -58,11 +62,13 @@
   タイトル + 取れる範囲の本文で運用し、本番初回で内容量を確認する。
 
 ### Changelog
+
 - `https://changelog.com/feed` を採用。master/news 等の派生フィードが存在するため、
   本番初回で取得件数を確認し、必要なら `news/feed` 等へ差し替える（**要検証**）。
 - 一般 dev 寄りなので AI キーワードフィルタを付与してノイズを抑える。
 
 ### GitHub Trending
+
 - 公式 API は無い（前提どおり）。
 - 非公式 RSS ジェネレータ **mshibanami/GitHubTrendingRSS**（2025 年も更新あり）を採用。
   - URL パターン: `https://mshibanami.github.io/GitHubTrendingRSS/daily/{language}.xml`
@@ -73,6 +79,7 @@
 - AI キーワードフィルタを付与（trending 全件は AI 以外も多いため）。
 
 ### Console.dev
+
 - RSS 提供自体はある旨の記述はあるが、安定した機械可読フィード URL を確証できず。
 - タスク方針（「無ければ今回は見送り」）に従い **スコープ外**。
 
@@ -83,7 +90,7 @@
 ソース間で票数スケールが大きく異なる（HN points ~50–1000、Lobsters score ~5–100）。
 そのまま足すと HN が支配的になるため、対数 + ソース別スケールで圧縮する。
 
-```
+```text
 crowdBonus = min(maxBonus, round(weight * log10(crowdScore * scale[source] + 1)))
 ```
 
@@ -92,7 +99,7 @@ crowdBonus = min(maxBonus, round(weight * log10(crowdScore * scale[source] + 1))
 
 最終スコア合成（Phase 1）:
 
-```
+```text
 score = sourceWeight + keywordBonus + crowdBonus
 ```
 
@@ -120,7 +127,7 @@ score = sourceWeight + keywordBonus + crowdBonus
 意図どおり機能することを確認した。ソース別トップスコアは以下のとおり、実務者/
 クラウド系も競争力のある値になっていた:
 
-```
+```text
 OpenAI 135 / Anthropic 127 / DeepMind 105 / Google AI 105 /
 GitHub Trending 102 / Ollama 100 / Lobsters 99 / Vercel 97 / Changelog 97 /
 arXiv 90 / ... / Latent Space 87 / Hacker News 87 / Simon Willison 85
