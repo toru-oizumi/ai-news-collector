@@ -3,6 +3,7 @@ import { getExistingUrls, pushOneToNotion } from "./notion/client.js";
 import { dedup } from "./pipeline/dedup.js";
 import { scoreAndFilter, selectDiverse } from "./pipeline/scorer.js";
 import { summarizeOne } from "./pipeline/summarizer.js";
+import { postSlackDigest } from "./slack/client.js";
 import { anthropicFetcher } from "./sources/anthropic-scraper.js";
 import { githubTrendingFetcher } from "./sources/github-trending.js";
 import { hackerNewsFetcher } from "./sources/hackernews.js";
@@ -95,9 +96,10 @@ async function main() {
     }
   } else if (env.NOTION_API_KEY && env.NOTION_DATABASE_ID) {
     console.log(`\n[5/5] Processing ${toProcess.length} articles (summarize → push)...`);
-    let created = 0;
     let skipped = 0;
     let totalTokens = 0;
+    // Successfully-pushed articles, in score order, for the Slack digest.
+    const pushed: Article[] = [];
 
     for (let i = 0; i < toProcess.length; i++) {
       const article = toProcess[i];
@@ -107,18 +109,24 @@ async function main() {
       totalTokens += tokens;
 
       const ok = await pushOneToNotion(article);
-      if (ok) created++;
+      if (ok) pushed.push(article);
       else skipped++;
 
       const title = article.title.slice(0, 60);
       console.log(`  ${tag} ${ok ? "✓" : "✗"} [${article.source}] ${title}`);
     }
 
-    console.log(`\n  Created: ${created}, Skipped: ${skipped}`);
+    console.log(`\n  Created: ${pushed.length}, Skipped: ${skipped}`);
     const avgTokens = toProcess.length > 0 ? Math.round(totalTokens / toProcess.length) : 0;
     console.log(
       `[Summarizer] Total tokens: ${totalTokens.toLocaleString()} (avg: ${avgTokens}/article)`
     );
+
+    // ── Step 6: Post a digest to Slack (optional, best-effort) ──
+    if (env.SLACK_BOT_TOKEN && env.SLACK_CHANNEL_ID) {
+      const ok = await postSlackDigest(pushed, pushed.length);
+      console.log(ok ? "  ✓ Slack digest posted" : "  ⚠ Slack digest not posted");
+    }
   } else {
     console.warn("\n⚠ No NOTION_API_KEY / NOTION_DATABASE_ID — printing results only");
     for (const a of toProcess.slice(0, 10)) {

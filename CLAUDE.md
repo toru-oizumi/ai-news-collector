@@ -153,9 +153,12 @@ Push to Notion Database
 | `NOTION_API_KEY` | 本番のみ | Notion Integration の API Key |
 | `NOTION_DATABASE_ID` | 本番のみ | 対象 Database の ID |
 | `MISTRAL_API_KEY` | 本番のみ | Mistral AI Console の API Key |
+| `SLACK_BOT_TOKEN` | 任意 | Slack Bot Token (`xoxb-…`, `chat:write` 権限)。設定時のみ収集後にダイジェスト投稿 |
+| `SLACK_CHANNEL_ID` | 任意 | 投稿先チャンネル ID。Bot を事前に招待しておく必要あり |
 
 ローカル開発では `.env` ファイルに記述 (`.gitignore` 済み)。
 ドライラン (`--dry-run`) では環境変数不要。
+Slack 連携は `SLACK_BOT_TOKEN` と `SLACK_CHANNEL_ID` が両方設定されている場合のみ有効 (best-effort: 失敗しても収集処理は継続)。
 
 ---
 
