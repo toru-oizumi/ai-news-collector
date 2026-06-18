@@ -42,6 +42,22 @@ describe("extractSummary", () => {
     expect(extractSummary('{"summary": ""}')).toBeNull();
   });
 
+  it("recovers the text from a JSON response truncated mid-string", () => {
+    // max_tokens cut the completion off before the closing quote/brace.
+    const raw = '{"summary": "新モデルが公開され、推論速度が向上しました。詳細は';
+    expect(extractSummary(raw)).toBe("新モデルが公開され、推論速度が向上しました。詳細は");
+  });
+
+  it("unescapes quotes when recovering a truncated summary", () => {
+    const raw = '{"summary": "\\"Vibe\\" が登場';
+    expect(extractSummary(raw)).toBe('"Vibe" が登場');
+  });
+
+  it("never leaks JSON scaffolding as the summary", () => {
+    // Broken JSON-like text with no recoverable summary field → null, not the braces.
+    expect(extractSummary('{"foo": "bar"')).toBeNull();
+  });
+
   it("caps an overly long plain-text fallback at 500 chars", () => {
     const long = "あ".repeat(800);
     expect(extractSummary(long)?.length).toBe(500);

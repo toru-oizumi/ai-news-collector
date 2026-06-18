@@ -6,6 +6,7 @@ interface MistralResponse {
     message?: {
       content?: string;
     };
+    finish_reason?: string;
   }[];
   usage?: {
     prompt_tokens: number;
@@ -97,13 +98,18 @@ async function callMistral(article: Article): Promise<{ summary: string | null; 
   const raw = data.choices?.[0]?.message?.content?.trim() ?? "";
   const tokens = data.usage?.total_tokens ?? 0;
 
+  if (data.choices?.[0]?.finish_reason === "length") {
+    console.warn(`[Summarizer] Response truncated (max_tokens) for "${article.title.slice(0, 60)}"`);
+  }
+
   return { summary: extractSummary(raw), tokens };
 }
 
 /**
  * Extract the summary text from the model's raw response.
  * Handles: bare JSON, JSON wrapped in ``` or ```json fences, JSON surrounded by
- * prose, and a non-JSON plain-text fallback. Exported for unit testing.
+ * prose, JSON truncated mid-string (recovers the partial value), and a non-JSON
+ * plain-text fallback. Exported for unit testing.
  */
 export function extractSummary(raw: string): string | null {
   const trimmed = raw.trim();
@@ -115,9 +121,8 @@ export function extractSummary(raw: string): string | null {
     .replace(/\s*```$/, "")
     .trim();
 
-  // Prefer a JSON object if one is present (possibly surrounded by stray prose).
-  // Valid JSON is authoritative: if it parses, trust its summary field (or null if empty)
-  // rather than falling back to treating the braces as plain text.
+  // 1. A complete JSON object is authoritative: if it parses, trust its summary field
+  //    (or null if empty) rather than treating the braces as plain text.
   const jsonMatch = unfenced.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     try {
@@ -125,11 +130,24 @@ export function extractSummary(raw: string): string | null {
       const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
       return summary.length > 0 ? summary : null;
     } catch {
-      // Not valid JSON — fall through to the plain-text fallback.
+      // Malformed JSON (often truncated mid-string) — try to recover below.
     }
   }
 
-  // No usable JSON — treat the cleaned text as the summary if it's substantial.
+  // 2. Recover the "summary" value even when the JSON is truncated (no closing quote/brace),
+  //    so a cut-off completion yields the real text instead of leaking `{"summary": "...`.
+  const partial = unfenced.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)/);
+  if (partial) {
+    const recovered = partial[1]
+      .replace(/\\"/g, '"')
+      .replace(/\\n/g, " ")
+      .replace(/\\\\/g, "\\")
+      .trim();
+    return recovered.length > 0 ? recovered.slice(0, 500) : null;
+  }
+
+  // 3. Plain-text fallback — but never return JSON-like scaffolding as the summary.
+  if (unfenced.startsWith("{")) return null;
   return unfenced.length > 10 ? unfenced.slice(0, 500) : null;
 }
 
