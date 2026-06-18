@@ -25,22 +25,29 @@ export const hackerNewsFetcher: Fetcher = {
 
     for (const query of HN_CONFIG.queries) {
       try {
+        // NOTE: the /search endpoint only allows `created_at_i` in numericFilters;
+        // filtering by `points` here returns HTTP 400. We fetch by time and apply
+        // the points threshold client-side below.
         const params = new URLSearchParams({
           query,
           tags: "story",
-          numericFilters: `created_at_i>${oneDayAgo},points>${HN_CONFIG.minScore}`,
+          numericFilters: `created_at_i>${oneDayAgo}`,
           hitsPerPage: "20",
         });
 
         const res = await fetch(`${HN_CONFIG.searchUrl}?${params}`, {
           signal: AbortSignal.timeout(10_000),
         });
-        if (!res.ok) continue;
+        if (!res.ok) {
+          console.warn(`[HN] Query "${query}" returned HTTP ${res.status}`);
+          continue;
+        }
 
         const data = (await res.json()) as HNResponse;
 
         for (const hit of data.hits) {
           if (!hit.url || seen.has(hit.url)) continue;
+          if (hit.points < HN_CONFIG.minScore) continue;
 
           // Title must contain at least one AI-related keyword (word-boundary aware)
           const titleLower = ` ${hit.title.toLowerCase()} `;
