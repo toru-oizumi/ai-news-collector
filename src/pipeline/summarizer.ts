@@ -99,7 +99,9 @@ async function callMistral(article: Article): Promise<{ summary: string | null; 
   const tokens = data.usage?.total_tokens ?? 0;
 
   if (data.choices?.[0]?.finish_reason === "length") {
-    console.warn(`[Summarizer] Response truncated (max_tokens) for "${article.title.slice(0, 60)}"`);
+    console.warn(
+      `[Summarizer] Response truncated (max_tokens) for "${article.title.slice(0, 60)}"`
+    );
   }
 
   return { summary: extractSummary(raw), tokens };
