@@ -4,6 +4,7 @@ import { dedup } from "./pipeline/dedup.js";
 import { scoreAndFilter, selectDiverse } from "./pipeline/scorer.js";
 import { summarizeOne } from "./pipeline/summarizer.js";
 import { anthropicFetcher } from "./sources/anthropic-scraper.js";
+import { githubTrendingFetcher } from "./sources/github-trending.js";
 import { hackerNewsFetcher } from "./sources/hackernews.js";
 import { huggingFaceFetcher } from "./sources/huggingface.js";
 import { lobstersFetcher } from "./sources/lobsters.js";
@@ -26,6 +27,7 @@ async function main() {
     hackerNewsFetcher,
     huggingFaceFetcher,
     lobstersFetcher,
+    githubTrendingFetcher,
   ];
 
   const fetchResults = await Promise.allSettled(

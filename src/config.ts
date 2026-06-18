@@ -120,25 +120,22 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
   { name: "Latent Space", url: "https://www.latent.space/feed" },
   // General dev/OSS — keyword-filtered to AI-relevant items. Feed URL to verify in first prod run.
   { name: "Changelog", url: "https://changelog.com/feed", keywords: AI_KEYWORDS },
-
-  // Tier 4: GitHub Trending (unofficial RSS generator, gh-pages — best-effort, AI-filtered)
-  // URL pattern: https://mshibanami.github.io/GitHubTrendingRSS/daily/{language}.xml
-  {
-    name: "GitHub Trending",
-    url: "https://mshibanami.github.io/GitHubTrendingRSS/daily/go.xml",
-    keywords: AI_KEYWORDS,
-  },
-  {
-    name: "GitHub Trending",
-    url: "https://mshibanami.github.io/GitHubTrendingRSS/daily/typescript.xml",
-    keywords: AI_KEYWORDS,
-  },
-  {
-    name: "GitHub Trending",
-    url: "https://mshibanami.github.io/GitHubTrendingRSS/daily/python.xml",
-    keywords: AI_KEYWORDS,
-  },
+  // NOTE: GitHub Trending moved to a dedicated scraper (githubTrendingFetcher / Phase 2),
+  // replacing the unofficial gh-pages RSS generator. See GITHUB_TRENDING_CONFIG below.
 ];
+
+// ── GitHub Trending (official site scrape — Phase 2, replaces unofficial gh-pages RSS) ──
+export const GITHUB_TRENDING_CONFIG = {
+  baseUrl: "https://github.com/trending",
+  /** Languages to scan; "" = all languages. AI work concentrates in Python/TypeScript. */
+  languages: ["", "python", "typescript"],
+  /** Trending window. */
+  since: "daily" as "daily" | "weekly" | "monthly",
+  /** Max repos kept per language scan (before cross-language dedup). */
+  maxItems: 20,
+  /** Keep a repo only if its name/description matches a shared AI keyword. */
+  keywords: AI_KEYWORDS,
+};
 
 // ── Anthropic (no official RSS — scrape from news + engineering pages) ──
 export const ANTHROPIC_URLS = [
@@ -230,10 +227,12 @@ export const SCORE_CONFIG = {
   crowd: {
     weight: 18,
     maxBonus: 60,
-    /** Per-source multiplier applied before the log. Lobsters votes are ~1/5 of HN points. */
+    /** Per-source multiplier applied before the log. Lobsters votes are ~1/5 of HN points;
+     *  GitHub daily-star counts run larger than upvotes, so scale them down to stay comparable. */
     scale: {
       "Hacker News": 1,
       Lobsters: 5,
+      "GitHub Trending": 0.5,
     } as Partial<Record<Source, number>>,
     defaultScale: 1,
   },
