@@ -123,6 +123,9 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
   { name: "Latent Space", url: "https://www.latent.space/feed" },
   // General dev/OSS — keyword-filtered to AI-relevant items. Feed URL to verify in first prod run.
   { name: "Changelog", url: "https://changelog.com/feed", keywords: AI_KEYWORDS },
+  // smol.ai AINews — curated daily recap of AI Twitter/Discord/Reddit (TOR-47). Already
+  // AI-focused (no keyword filter needed); one digest item per day, full-text descriptions.
+  { name: "smol.ai", url: "https://news.smol.ai/rss.xml" },
   // NOTE: GitHub Trending moved to a dedicated scraper (githubTrendingFetcher / Phase 2),
   // replacing the unofficial gh-pages RSS generator. See GITHUB_TRENDING_CONFIG below.
 ];
@@ -206,6 +209,8 @@ export const SCORE_CONFIG = {
     "Latent Space": 60,
     "Import AI": 55,
     Changelog: 50,
+    // Curated AI-Twitter/Discord recap (TOR-47) — practitioner-tier signal.
+    "smol.ai": 60,
   } satisfies Record<Source, number>,
 
   /** Bonus keywords (additive) */

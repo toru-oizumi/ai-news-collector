@@ -182,3 +182,26 @@ crowd 系への予約枠が必要だが、Phase 1 のスコープ外とする（
 - **Mistral 公式フィードを `RSS_SOURCES` に追加**（`Source` 型・`sourceWeights` は既存定義を流用、weight 70）。
 - xAI は公式が 403 のため Olshansk ミラーを維持（コメントに理由を明記）。
 - DeepSeek/Cohere/Stability は安定フィードが無く Phase 3 では不採用。
+
+---
+
+## ソース追加: smol.ai AINews — X/Twitter AI ニュースのキュレーション (TOR-47)
+
+X(Twitter) 生データは玉石混交で直接利用に不適なため、AI Twitter をキュレーション/
+要約しているサイトの RSS を取り込む方針とした。候補の到達性を実測 (2026-06):
+
+| 候補 | URL | 結果 | 判断 |
+|------|-----|------|------|
+| smol.ai AINews | `https://news.smol.ai/rss.xml` | 200 / FEED / 651 items / 全文あり | **採用**。"Weekday recaps of top News for AI Engineers"。AI Twitter+Discord+Reddit の日次キュレーション。公式 RSS で安定。 |
+| TLDR AI | `https://tldr.tech/api/rss/ai` | 200 / 20 items | 稼働。別編集視点の日刊。補完候補だが今回は見送り。 |
+| Last Week in AI | `https://lastweekin.ai/feed` | 200 / 週次 | 稼働だが週次で頻度低め。候補。 |
+| Techmeme | `https://www.techmeme.com/feed.xml` | 200 | テック全般で AI 専用でない（X ランキング由来）。対象外。 |
+| Ben's Bites | `https://bensbites.beehiiv.com/feed` | 404 | 安定フィードなし、不採用。 |
+| The Rundown AI | `https://www.therundown.ai/feed` | 404 | 安定フィードなし、不採用。 |
+
+### 対応（今回は smol.ai のみ）
+
+- `RSS_SOURCES` に `{ name: "smol.ai", url: "https://news.smol.ai/rss.xml" }` を追加。元から
+  AI 特化のため `keywords` フィルタ不要。`sourceWeights["smol.ai"] = 60`（キュレーション系）。
+- 留意点: 粒度は日次ダイジェスト1件（"not much happened today" の日もある）。元が要約のため
+  Mistral 再要約は「要約の要約」になる点、社外公開時は編集著作物として出典明記・類似性に注意。
