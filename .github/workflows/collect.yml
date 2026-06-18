@@ -28,4 +28,7 @@ jobs:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          # Optional Slack digest — leave the secrets unset to disable.
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
         run: npm run collect

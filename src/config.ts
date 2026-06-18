@@ -5,6 +5,9 @@ export const env = {
   NOTION_API_KEY: process.env.NOTION_API_KEY ?? "",
   NOTION_DATABASE_ID: process.env.NOTION_DATABASE_ID ?? "",
   MISTRAL_API_KEY: process.env.MISTRAL_API_KEY ?? "",
+  // Optional Slack delivery — when both are set, a digest is posted after the run.
+  SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
+  SLACK_CHANNEL_ID: process.env.SLACK_CHANNEL_ID ?? "",
   DRY_RUN: process.argv.includes("--dry-run"),
 } as const;
 
@@ -255,4 +258,11 @@ export const MISTRAL_CONFIG = {
   maxSummarize: 50,
   /** Delay between requests (ms) — free tier is 2 RPM, so 31s interval */
   delayMs: 31_000, // ~1.9 RPM, safe under 2 RPM limit
+};
+
+// ── Slack (optional digest delivery via chat.postMessage) ──
+export const SLACK_CONFIG = {
+  apiUrl: "https://slack.com/api/chat.postMessage",
+  /** Max articles included in the digest message (kept well under Slack's 50-block limit). */
+  topN: 10,
 };
