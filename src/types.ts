@@ -40,7 +40,8 @@ export type Source =
   | "Simon Willison"
   | "Latent Space"
   | "Import AI"
-  | "Changelog";
+  | "Changelog"
+  | "smol.ai";
 
 export type Category =
   | "LLM"
