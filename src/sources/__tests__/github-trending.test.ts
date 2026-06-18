@@ -28,7 +28,6 @@ function makeRepo(overrides: Partial<TrendingRepo> = {}): TrendingRepo {
     description: "An autonomous LLM agent framework.",
     language: "Python",
     periodStars: 371,
-    totalStars: 5332,
     ...overrides,
   };
 }
@@ -43,7 +42,6 @@ describe("parseTrendingHtml", () => {
     expect(first.url).toBe("https://github.com/acme/llm-agent");
     expect(first.description).toBe("An autonomous LLM agent framework.");
     expect(first.periodStars).toBe(371);
-    expect(first.totalStars).toBe(5332);
   });
 
   it("returns an empty array for markup with no rows", () => {
@@ -84,7 +82,8 @@ describe("toArticle", () => {
     expect(article.publishedAt).toBeNull();
   });
 
-  it("falls back to total stars when no period stars", () => {
-    expect(toArticle(makeRepo({ periodStars: 0, totalStars: 900 })).crowdScore).toBe(900);
+  it("leaves crowdScore undefined when there is no period-star delta", () => {
+    // No fallback to cumulative stars — a missing delta means no crowd signal.
+    expect(toArticle(makeRepo({ periodStars: 0 })).crowdScore).toBeUndefined();
   });
 });

@@ -9,10 +9,9 @@ export interface TrendingRepo {
   url: string;
   description: string;
   language: string;
-  /** Stars gained within the trending window (today / this week) — the crowd signal. */
+  /** Stars gained within the trending window (today / this week) — the crowd signal.
+   *  0 when the page exposes no delta (or the markup changed). */
   periodStars: number;
-  /** Total stars (fallback crowd signal). */
-  totalStars: number;
 }
 
 /** Parse a count like "1,234" or "371 stars today" into a number (0 if none). */
@@ -37,8 +36,7 @@ export function parseTrendingHtml(html: string): TrendingRepo[] {
     const fullName = href.replace(/^\//, "");
     const description = $r.find("p").first().text().trim();
     const language = $r.find("[itemprop=programmingLanguage]").text().trim();
-    const totalStars = parseStarCount($r.find('a[href$="/stargazers"]').first().text());
-    const periodStars = parseStarCount($r.find("span.float-sm-right").text());
+    const periodStars = parseStarCount($r.find("span.float-sm-right").first().text());
 
     repos.push({
       fullName,
@@ -46,7 +44,6 @@ export function parseTrendingHtml(html: string): TrendingRepo[] {
       description,
       language,
       periodStars,
-      totalStars,
     });
   });
 
@@ -77,8 +74,11 @@ export function toArticle(repo: TrendingRepo): Article {
     publishedAt: null,
     fetchedAt: new Date(),
     abstract: repo.description.slice(0, 1000),
-    // Stars gained in the window is the trending signal; fall back to total stars.
-    crowdScore: repo.periodStars > 0 ? repo.periodStars : repo.totalStars,
+    // Crowd signal = stars gained in the window (the trending velocity). We deliberately
+    // do NOT fall back to total stars: cumulative counts are on a different (much larger)
+    // scale than the daily delta, and mixing them under one crowd.scale would let a markup
+    // change silently inflate every repo to the max crowd bonus. No delta → no crowd signal.
+    crowdScore: repo.periodStars > 0 ? repo.periodStars : undefined,
   };
 }
 
