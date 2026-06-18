@@ -68,8 +68,10 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
   { name: "AWS ML", url: "https://aws.amazon.com/blogs/ai/feed/" },
 
   // Tier 3: Model releases
-  // NOTE: Mistral has no Olshansk mirror and no verified official RSS feed.
-  // Add back when a reliable feed URL is confirmed (e.g. https://mistral.ai/news/rss.xml).
+  // Official Mistral AI blog feed (Phase 3 / TOR-42). Verified reachable again at
+  // https://mistral.ai/rss.xml (the previously-removed /news/rss.xml and /feed.xml still 404).
+  { name: "Mistral", url: "https://mistral.ai/rss.xml" },
+  // xAI official x.ai blocks non-browser UAs (403), so we rely on the Olshansk mirror.
   {
     name: "xAI",
     url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_xainews.xml",
