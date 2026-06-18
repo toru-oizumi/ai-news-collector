@@ -158,3 +158,27 @@ crowdBonus 最大 60）で、ちょうど 90〜100 帯の RSS 系と競合する
 入らないこともある。cap を 6 に下げても入るのは中位 RSS（Vercel 等）で、
 HN/Lobsters の可視性は本質的に票数次第。確実に常時表示したい場合は
 crowd 系への予約枠が必要だが、Phase 1 のスコープ外とする（運用しながら判断）。
+
+---
+
+## Phase 3: model release 系一次ソース追加 (TOR-42)
+
+`Mistral / xAI 等` の model release 系一次ソースを追加するにあたり、候補フィードの
+到達性を再確認した（Phase 0 同様、追加前の疎通検証）。実測 (2026-06):
+
+| 候補 | URL | 結果 | 判断 |
+|------|-----|------|------|
+| Mistral 公式 | `https://mistral.ai/rss.xml` | 200 / FEED / 73 items | **採用**（"Mistral AI Blog"。Medium 3.5 等のモデルリリースが流れる） |
+| Mistral 公式(旧) | `/news/rss.xml`, `/feed.xml` | 404 | 不採用（過去に削除した URL。現在も404） |
+| Mistral ミラー | Olshansk `feed_mistral.xml` | 200 / 54 items | 公式が復活したため不使用（一次ソース優先） |
+| xAI 公式 | `https://x.ai/news/rss.xml` 等 | 403 | 非ブラウザ UA をブロック。既存の Olshansk ミラーを維持 |
+| DeepSeek 公式 | `api-docs.deepseek.com/news/rss.xml` | 404 | 安定フィード無し。GitHub `releases.atom` は 1 item のみで不採用 |
+| Cohere | `cohere.com/blog/rss.xml` | 307→HTML | フィード実体なし、不採用 |
+| Stability AI | `stability.ai/news?format=rss` | 301→HTML | フィード実体なし、不採用 |
+| Together AI | `together.ai/blog/rss.xml` | 200 / 100 items | 稼働。ただし推論基盤寄り（model release 一次ソースではない）→ 将来のエコシステム拡充候補として保留 |
+
+### 対応
+
+- **Mistral 公式フィードを `RSS_SOURCES` に追加**（`Source` 型・`sourceWeights` は既存定義を流用、weight 70）。
+- xAI は公式が 403 のため Olshansk ミラーを維持（コメントに理由を明記）。
+- DeepSeek/Cohere/Stability は安定フィードが無く Phase 3 では不採用。
