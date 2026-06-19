@@ -108,9 +108,14 @@ async function main() {
       const tokens = await summarizeOne(article);
       totalTokens += tokens;
 
-      const ok = await pushOneToNotion(article);
-      if (ok) pushed.push(article);
-      else skipped++;
+      const notionUrl = await pushOneToNotion(article);
+      const ok = notionUrl !== null;
+      if (ok) {
+        if (notionUrl) article.notionUrl = notionUrl;
+        pushed.push(article);
+      } else {
+        skipped++;
+      }
 
       const title = article.title.slice(0, 60);
       console.log(`  ${tag} ${ok ? "✓" : "✗"} [${article.source}] ${title}`);

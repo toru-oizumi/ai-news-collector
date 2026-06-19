@@ -75,10 +75,10 @@ export async function getExistingUrls(): Promise<Set<string>> {
 
 // ── Push a single article to Notion ──
 
-export async function pushOneToNotion(article: Article): Promise<boolean> {
+export async function pushOneToNotion(article: Article): Promise<string | null> {
   const client = getClient();
   try {
-    await withRetry(
+    const page = await withRetry(
       () =>
         client.pages.create({
           parent: { database_id: env.NOTION_DATABASE_ID },
@@ -116,9 +116,11 @@ export async function pushOneToNotion(article: Article): Promise<boolean> {
     );
     // Notion rate limit: 3 requests/sec → ~340ms between requests
     await new Promise((r) => setTimeout(r, 350));
-    return true;
+    // `pages.create` returns a full page object (with `url`) for integration tokens;
+    // fall back to the empty string if the field is somehow absent so the push still counts.
+    return "url" in page ? page.url : "";
   } catch (err) {
     console.warn(`[Notion] Failed to create page for "${article.title}":`, err);
-    return false;
+    return null;
   }
 }
