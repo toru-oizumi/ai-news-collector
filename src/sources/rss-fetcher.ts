@@ -24,6 +24,15 @@ export function createRSSFetcher(config: RSSSourceConfig): Fetcher {
             if (!matched) return null;
           }
 
+          const publishedAt = parseDate(item.pubDate);
+
+          // Freshness filter (if configured) — skip items older than maxAgeDays.
+          // Items with no publish date are kept (we can't determine their age).
+          if (config.maxAgeDays !== undefined && publishedAt) {
+            const ageMs = Date.now() - publishedAt.getTime();
+            if (ageMs > config.maxAgeDays * 24 * 60 * 60 * 1000) return null;
+          }
+
           const article: Article = {
             title,
             url: normalizeUrl(url),
@@ -31,7 +40,7 @@ export function createRSSFetcher(config: RSSSourceConfig): Fetcher {
             category: [],
             score: 0,
             summary: "",
-            publishedAt: parseDate(item.pubDate),
+            publishedAt,
             fetchedAt: new Date(),
             abstract: (item.contentSnippet ?? item.content ?? "").slice(0, 1000),
           };

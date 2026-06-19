@@ -125,7 +125,9 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
   { name: "Changelog", url: "https://changelog.com/feed", keywords: AI_KEYWORDS },
   // smol.ai AINews — curated daily recap of AI Twitter/Discord/Reddit (TOR-47). Already
   // AI-focused (no keyword filter needed); one digest item per day, full-text descriptions.
-  { name: "smol.ai", url: "https://news.smol.ai/rss.xml" },
+  // The feed exposes 600+ historical recaps, so cap freshness to avoid surfacing stale items
+  // (the collector runs daily; 7 days covers weekends / the occasional missed run).
+  { name: "smol.ai", url: "https://news.smol.ai/rss.xml", maxAgeDays: 7 },
   // NOTE: GitHub Trending moved to a dedicated scraper (githubTrendingFetcher / Phase 2),
   // replacing the unofficial gh-pages RSS generator. See GITHUB_TRENDING_CONFIG below.
 ];

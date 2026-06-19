@@ -12,6 +12,9 @@ export interface Article {
   /** Crowd signal (votes/points) where the source provides it — HN points, Lobsters score, etc.
    *  Normalized into the final score by the scorer. Undefined when the source has no crowd signal. */
   crowdScore?: number;
+  /** URL of the Notion page created for this article. Set after a successful push;
+   *  used to link the Slack digest back to the Notion entry. */
+  notionUrl?: string;
 }
 
 export type Source =
@@ -70,4 +73,8 @@ export interface RSSSourceConfig {
   url: string;
   /** Optional keyword filter — only include items matching any of these */
   keywords?: string[];
+  /** Optional freshness filter — drop items published more than this many days ago.
+   *  Useful for feeds that expose a long backlog (e.g. smol.ai ships 600+ items).
+   *  Items with no publish date are kept (age cannot be determined). */
+  maxAgeDays?: number;
 }

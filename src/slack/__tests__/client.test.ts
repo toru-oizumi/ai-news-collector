@@ -80,4 +80,18 @@ describe("buildDigestBlocks", () => {
     const blocks = buildDigestBlocks([makeArticle({ category: [] })], "2026-06-18", 1);
     expect(sectionText(blocks[3])).toContain("· —");
   });
+
+  it("appends a Notion link when the article has a notionUrl", () => {
+    const blocks = buildDigestBlocks(
+      [makeArticle({ notionUrl: "https://www.notion.so/abc123" })],
+      "2026-06-18",
+      1
+    );
+    expect(sectionText(blocks[3])).toContain("· <https://www.notion.so/abc123|Notion>");
+  });
+
+  it("omits the Notion link when the article has no notionUrl", () => {
+    const blocks = buildDigestBlocks([makeArticle()], "2026-06-18", 1);
+    expect(sectionText(blocks[3])).not.toContain("|Notion>");
+  });
 });

@@ -47,11 +47,13 @@ export function buildDigestBlocks(
   for (const a of articles) {
     const cats = a.category.length > 0 ? a.category.join(" / ") : "—";
     const body = a.summary?.trim() || a.abstract.trim().slice(0, 160) || "(要約なし)";
+    // Append a link back to the Notion entry when we have one (set after a successful push).
+    const notionLink = a.notionUrl ? ` · <${a.notionUrl}|Notion>` : "";
     blocks.push({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*<${a.url}|${escapeMrkdwn(a.title)}>*\n\`${a.source}\` · score ${a.score} · ${cats}\n${escapeMrkdwn(body)}`,
+        text: `*<${a.url}|${escapeMrkdwn(a.title)}>*\n\`${a.source}\` · score ${a.score} · ${cats}${notionLink}\n${escapeMrkdwn(body)}`,
       },
     });
   }
