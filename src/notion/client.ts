@@ -73,6 +73,51 @@ export async function getExistingUrls(): Promise<Set<string>> {
   return urls;
 }
 
+// ── Look up a page by URL / update its Status (Phase 5B reaction sync) ──
+
+export interface NotionPageRef {
+  pageId: string;
+  /** Current Status select name (e.g. "Unread", "Digested", "Read", "Starred"), or "" if unset. */
+  status: string;
+}
+
+/** Find the page whose URL property exactly matches `url`. Returns null if none. */
+export async function getPageByUrl(url: string): Promise<NotionPageRef | null> {
+  const client = getClient();
+  const res = await withRetry(
+    () =>
+      client.databases.query({
+        database_id: env.NOTION_DATABASE_ID,
+        page_size: 1,
+        filter: { property: "URL", url: { equals: url } },
+      }),
+    "databases.query(byUrl)"
+  );
+
+  const page = res.results[0];
+  if (!page || !("properties" in page)) return null;
+
+  // The query-result property union is broad; read the select name via a narrow cast
+  // (same loose-typing approach as digest-main.ts).
+  const statusProp = page.properties.Status as { select?: { name?: string } | null } | undefined;
+  return { pageId: page.id, status: statusProp?.select?.name ?? "" };
+}
+
+/** Set a page's Status select. */
+export async function updateStatus(pageId: string, status: string): Promise<void> {
+  const client = getClient();
+  await withRetry(
+    () =>
+      client.pages.update({
+        page_id: pageId,
+        properties: { Status: { select: { name: status } } },
+      }),
+    "pages.update(status)"
+  );
+  // Notion rate limit: 3 req/sec
+  await new Promise((r) => setTimeout(r, 350));
+}
+
 // ── Push a single article to Notion ──
 
 export async function pushOneToNotion(article: Article): Promise<string | null> {

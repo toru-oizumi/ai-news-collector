@@ -6,6 +6,7 @@ export type SlackBlock = Record<string, unknown>;
 
 interface SlackPostResponse {
   ok: boolean;
+  ts?: string;
   error?: string;
 }
 
@@ -15,16 +16,16 @@ function escapeMrkdwn(text: string): string {
 }
 
 /**
- * Build the Block Kit payload for a digest of the given articles.
- * `total` is the full count of new articles (the digest shows the top `articles.length`).
- * Exported for unit testing (no network).
+ * Build the parent digest message: a header + a context line summarizing the count.
+ * Each article is posted separately as a threaded reply (see buildArticleReplyBlocks)
+ * so reactions can be attributed to individual articles (Phase 5A). Exported for testing.
  */
-export function buildDigestBlocks(
-  articles: Article[],
+export function buildDigestHeaderBlocks(
   dateLabel: string,
+  shown: number,
   total: number
 ): SlackBlock[] {
-  const blocks: SlackBlock[] = [
+  return [
     {
       type: "header",
       text: { type: "plain_text", text: `🗞️ AI News Digest — ${dateLabel}`, emoji: true },
@@ -35,34 +36,62 @@ export function buildDigestBlocks(
         {
           type: "mrkdwn",
           text:
-            total > articles.length
-              ? `本日の新着 ${total} 件から上位 ${articles.length} 件`
-              : `本日の新着 ${articles.length} 件`,
+            total > shown
+              ? `本日の新着 ${total} 件から上位 ${shown} 件（各記事はスレッドに投稿）`
+              : `本日の新着 ${shown} 件（各記事はスレッドに投稿）`,
         },
       ],
     },
-    { type: "divider" },
   ];
-
-  for (const a of articles) {
-    const cats = a.category.length > 0 ? a.category.join(" / ") : "—";
-    const body = a.summary?.trim() || a.abstract.trim().slice(0, 160) || "(要約なし)";
-    // Append a link back to the Notion entry when we have one (set after a successful push).
-    const notionLink = a.notionUrl ? ` · <${a.notionUrl}|Notion>` : "";
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*<${a.url}|${escapeMrkdwn(a.title)}>*\n\`${a.source}\` · score ${a.score} · ${cats}${notionLink}\n${escapeMrkdwn(body)}`,
-      },
-    });
-  }
-
-  return blocks;
 }
 
 /**
- * Post a digest of the given articles to Slack via chat.postMessage.
+ * Build the Block Kit for a single article, posted as one threaded reply.
+ * The leading `<url|title>` link is the article URL — the reaction sync (Phase 5B)
+ * parses it back out to match the reaction to a Notion page. Exported for testing.
+ */
+export function buildArticleReplyBlocks(article: Article): SlackBlock[] {
+  const cats = article.category.length > 0 ? article.category.join(" / ") : "—";
+  const body = article.summary?.trim() || article.abstract.trim().slice(0, 160) || "(要約なし)";
+  const notionLink = article.notionUrl ? ` · <${article.notionUrl}|Notion>` : "";
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*<${article.url}|${escapeMrkdwn(article.title)}>*\n\`${article.source}\` · score ${article.score} · ${cats}${notionLink}\n${escapeMrkdwn(body)}`,
+      },
+    },
+  ];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Post a single chat.postMessage. Returns the parsed response (best-effort — never throws). */
+async function postMessage(payload: Record<string, unknown>): Promise<SlackPostResponse> {
+  try {
+    const res = await fetch(SLACK_CONFIG.apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15_000),
+    });
+    // chat.postMessage returns HTTP 200 even on logical errors — check the `ok` field.
+    return (await res.json()) as SlackPostResponse;
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Post a digest to Slack: one parent message, then one threaded reply per article.
+ * Threading keeps the channel quiet while letting reactions land on individual
+ * articles (consumed by the Phase 5B reaction sync).
  * No-op (returns false) when Slack env vars are unset or there are no articles.
  * Best-effort: logs and returns false on failure — never throws.
  */
@@ -72,34 +101,36 @@ export async function postSlackDigest(articles: Article[], total: number): Promi
 
   const top = articles.slice(0, SLACK_CONFIG.topN);
   const dateLabel = new Date().toISOString().slice(0, 10);
-  const blocks = buildDigestBlocks(top, dateLabel, total);
-  const text = `AI News Digest — ${dateLabel}: 新着 ${total} 件`;
 
-  try {
-    const res = await fetch(SLACK_CONFIG.apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
-      },
-      body: JSON.stringify({
-        channel: env.SLACK_CHANNEL_ID,
-        text, // fallback text for notifications / accessibility
-        blocks,
-        unfurl_links: false, // keep the digest compact — no per-link previews
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+  // 1. Parent message. Its fallback text starts with parentTextPrefix so the reaction
+  //    sync can recognize our own digests when scanning channel history.
+  const parent = await postMessage({
+    channel: env.SLACK_CHANNEL_ID,
+    text: `${SLACK_CONFIG.parentTextPrefix} — ${dateLabel}: 新着 ${total} 件`,
+    blocks: buildDigestHeaderBlocks(dateLabel, top.length, total),
+    unfurl_links: false,
+  });
 
-    // chat.postMessage returns HTTP 200 even on logical errors — check the `ok` field.
-    const data = (await res.json()) as SlackPostResponse;
-    if (!data.ok) {
-      console.warn(`[Slack] postMessage failed: ${data.error ?? "unknown error"}`);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.warn("[Slack] Failed to post digest:", err);
+  if (!parent.ok || !parent.ts) {
+    console.warn(`[Slack] Parent digest post failed: ${parent.error ?? "no ts returned"}`);
     return false;
   }
+
+  // 2. One threaded reply per article.
+  let posted = 0;
+  for (const a of top) {
+    const reply = await postMessage({
+      channel: env.SLACK_CHANNEL_ID,
+      thread_ts: parent.ts,
+      text: a.title, // fallback text for notifications / accessibility
+      blocks: buildArticleReplyBlocks(a),
+      unfurl_links: false,
+    });
+    if (reply.ok) posted++;
+    else console.warn(`[Slack] Article reply failed for "${a.title.slice(0, 40)}": ${reply.error}`);
+    await sleep(SLACK_CONFIG.replyDelayMs);
+  }
+
+  console.log(`  Slack digest: parent + ${posted}/${top.length} article replies`);
+  return true;
 }

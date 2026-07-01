@@ -270,6 +270,57 @@ export const MISTRAL_CONFIG = {
 // ── Slack (optional digest delivery via chat.postMessage) ──
 export const SLACK_CONFIG = {
   apiUrl: "https://slack.com/api/chat.postMessage",
-  /** Max articles included in the digest message (kept well under Slack's 50-block limit). */
+  /** conversations.history — list recent channel messages (find our digest parents). */
+  historyUrl: "https://slack.com/api/conversations.history",
+  /** conversations.replies — list a thread's replies (per-article messages + reactions). */
+  repliesUrl: "https://slack.com/api/conversations.replies",
+  /** Max articles included in the digest (posted as one threaded reply each). */
   topN: 10,
+  /** Delay between per-article thread replies (ms) — chat.postMessage is ~1 msg/sec/channel. */
+  replyDelayMs: 1_200,
+  /** Prefix of the parent digest message's fallback text — used to recognize our own
+   *  digests when scanning channel history for reactions. Keep in sync with postSlackDigest. */
+  parentTextPrefix: "AI News Digest",
+  /** How many days of channel history to scan for reactions (bounds the API calls). */
+  reactionLookbackDays: 3,
+  /** Emoji → article action mapping (Phase 5B). Checked "starred" first, then "read",
+   *  so any strong-positive stamp wins over a plain "seen" stamp on the same message.
+   *  Names are Slack reaction shortcodes without colons (aliases included generously so
+   *  reactions aren't missed just because a different-but-equivalent emoji was used). */
+  reactions: {
+    // Strong positive / worth keeping → Starred.
+    starred: [
+      "star",
+      "star2",
+      "glowing_star",
+      "stars",
+      "sparkles",
+      "fire",
+      "100",
+      "heart",
+      "heart_eyes",
+      "heartpulse",
+      "tada",
+      "clap",
+      "raised_hands",
+      "bookmark",
+      "pushpin",
+      "bulb",
+    ],
+    // Seen / acknowledged / processed → Read.
+    read: [
+      "white_check_mark",
+      "heavy_check_mark",
+      "ballot_box_with_check",
+      "eyes",
+      "eye",
+      "+1",
+      "thumbsup",
+      "-1",
+      "thumbsdown",
+      "ok_hand",
+      "ok",
+      "pray",
+    ],
+  },
 };
