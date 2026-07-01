@@ -32,3 +32,12 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
         run: npm run collect
+
+  # Run digest generation immediately after a successful collect, on its own
+  # runner (independent 45-min timeout). Chaining it here — instead of a separate
+  # scheduled workflow — keeps digest.yml free of a `schedule` trigger, which
+  # GitHub was auto-disabling for inactivity and silently halting digests.
+  digest:
+    needs: collect
+    uses: ./.github/workflows/digest.yml
+    secrets: inherit
