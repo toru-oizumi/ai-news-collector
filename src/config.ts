@@ -283,10 +283,44 @@ export const SLACK_CONFIG = {
   parentTextPrefix: "AI News Digest",
   /** How many days of channel history to scan for reactions (bounds the API calls). */
   reactionLookbackDays: 3,
-  /** Emoji → article action mapping (Phase 5B). Checked "starred" first, then "read".
-   *  Names are Slack reaction shortcodes without colons. */
+  /** Emoji → article action mapping (Phase 5B). Checked "starred" first, then "read",
+   *  so any strong-positive stamp wins over a plain "seen" stamp on the same message.
+   *  Names are Slack reaction shortcodes without colons (aliases included generously so
+   *  reactions aren't missed just because a different-but-equivalent emoji was used). */
   reactions: {
-    starred: ["star", "star2", "bookmark"],
-    read: ["white_check_mark", "heavy_check_mark", "eyes", "-1", "thumbsdown"],
+    // Strong positive / worth keeping → Starred.
+    starred: [
+      "star",
+      "star2",
+      "glowing_star",
+      "stars",
+      "sparkles",
+      "fire",
+      "100",
+      "heart",
+      "heart_eyes",
+      "heartpulse",
+      "tada",
+      "clap",
+      "raised_hands",
+      "bookmark",
+      "pushpin",
+      "bulb",
+    ],
+    // Seen / acknowledged / processed → Read.
+    read: [
+      "white_check_mark",
+      "heavy_check_mark",
+      "ballot_box_with_check",
+      "eyes",
+      "eye",
+      "+1",
+      "thumbsup",
+      "-1",
+      "thumbsdown",
+      "ok_hand",
+      "ok",
+      "pray",
+    ],
   },
 };

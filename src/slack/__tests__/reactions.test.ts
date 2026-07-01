@@ -2,15 +2,16 @@ import { describe, expect, it } from "vitest";
 import { extractArticleUrl, reactionsToStatus } from "../reactions.js";
 
 describe("reactionsToStatus", () => {
-  it("maps star/bookmark to Starred", () => {
-    expect(reactionsToStatus(["star"])).toBe("Starred");
-    expect(reactionsToStatus(["bookmark"])).toBe("Starred");
+  it("maps the broad set of positive stamps to Starred", () => {
+    for (const name of ["star", "bookmark", "fire", "100", "heart", "heart_eyes", "tada", "bulb"]) {
+      expect(reactionsToStatus([name])).toBe("Starred");
+    }
   });
 
-  it("maps read-type reactions to Read", () => {
-    expect(reactionsToStatus(["white_check_mark"])).toBe("Read");
-    expect(reactionsToStatus(["eyes"])).toBe("Read");
-    expect(reactionsToStatus(["-1"])).toBe("Read");
+  it("maps the broad set of seen/acknowledged stamps to Read", () => {
+    for (const name of ["white_check_mark", "eyes", "+1", "thumbsup", "-1", "ok_hand"]) {
+      expect(reactionsToStatus([name])).toBe("Read");
+    }
   });
 
   it("prefers Starred when both star and read reactions are present", () => {
@@ -19,7 +20,7 @@ describe("reactionsToStatus", () => {
 
   it("returns null for unknown or no reactions", () => {
     expect(reactionsToStatus([])).toBeNull();
-    expect(reactionsToStatus(["tada", "rocket"])).toBeNull();
+    expect(reactionsToStatus(["rocket", "wave"])).toBeNull();
   });
 });
 

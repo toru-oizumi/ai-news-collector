@@ -81,10 +81,12 @@ and to sync reactions back to Notion. Leave them unset to disable.
   land on individual articles.
 - **React to curate** — the next collect run reflects reactions into Notion Status:
 
-  | Reaction | Notion Status |
+  | Reaction (any of) | Notion Status |
   |---|---|
-  | ⭐ `:star:` / 🔖 `:bookmark:` | **Starred** |
-  | ✅ `:white_check_mark:` / 👀 `:eyes:` / 👎 `:-1:` | **Read** |
+  | ⭐🌟✨🔥💯❤️😍🎉👏🙌🔖📌💡 (`star`, `fire`, `100`, `heart`, `tada`, `bookmark`, …) | **Starred** |
+  | ✅☑️✔️👀👍👎🆗🙏 (`white_check_mark`, `eyes`, `+1`, `-1`, `ok_hand`, …) | **Read** |
+
+  See `SLACK_CONFIG.reactions` in `src/config.ts` for the full list; add your own aliases there.
 
   Reactions only advance status forward (`Unread`/`Digested` → `Read` → `Starred`); a status you
   set manually is never overwritten.
