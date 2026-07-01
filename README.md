@@ -19,7 +19,7 @@ Runs two daily jobs: **collect** (fetch & summarize) and **digest** (detailed an
 ├─ Summarize (Mistral Small → short Japanese summary, 2-3 sentences)
 └─ Push to Notion Database (Status: "Unread")
 
-[Job 2: digest]  2h after each collect run
+[Job 2: digest]  chained after each successful collect run (same workflow)
 ├─ Query Notion (Status="Unread", top 30 by Score)
 ├─ Fetch article body (cheerio HTML scraper)
 ├─ Generate Digest (Mistral → Japanese summary 400-600 chars + Key Points)

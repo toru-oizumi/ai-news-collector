@@ -1,12 +1,14 @@
 name: Generate Digests and Translations
 
+# Triggered as a dependent job by the Collect workflow (workflow_call), so it
+# no longer owns a `schedule` trigger. A standalone scheduled workflow was being
+# auto-disabled by GitHub for inactivity (disabled_inactivity), silently stopping
+# digest generation. Chaining it off collect means only one scheduled workflow
+# exists, which can't be independently disabled. `workflow_dispatch` is kept for
+# manual runs / backfills.
 on:
-  schedule:
-    # 収集ジョブ(collect: 0 */6 * * *)の2時間後に実行
-    # 02:00 / 08:00 / 14:00 / 20:00 UTC
-    # 11:00 / 17:00 / 23:00 / 05:00 JST
-    - cron: "0 2/6 * * *"
-  workflow_dispatch: # Manual trigger
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
   digest:
