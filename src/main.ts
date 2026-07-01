@@ -1,9 +1,10 @@
 import { MISTRAL_CONFIG, RSS_SOURCES, env } from "./config.js";
-import { getExistingUrls, pushOneToNotion } from "./notion/client.js";
+import { getExistingUrls, getPageByUrl, pushOneToNotion, updateStatus } from "./notion/client.js";
 import { dedup } from "./pipeline/dedup.js";
 import { scoreAndFilter, selectDiverse } from "./pipeline/scorer.js";
 import { summarizeOne } from "./pipeline/summarizer.js";
 import { postSlackDigest } from "./slack/client.js";
+import { fetchDigestReactions } from "./slack/reactions.js";
 import { anthropicFetcher } from "./sources/anthropic-scraper.js";
 import { githubTrendingFetcher } from "./sources/github-trending.js";
 import { hackerNewsFetcher } from "./sources/hackernews.js";
@@ -12,12 +13,55 @@ import { lobstersFetcher } from "./sources/lobsters.js";
 import { createRSSFetcher } from "./sources/rss-fetcher.js";
 import type { Article, Fetcher } from "./types.js";
 
+// Status precedence: reactions can only advance an article forward, never downgrade
+// it or overwrite a status the user set manually (e.g. a manual "Starred").
+const STATUS_RANK: Record<string, number> = { Unread: 0, Digested: 1, Read: 2, Starred: 3 };
+
+function shouldAdvance(current: string, target: string): boolean {
+  return (STATUS_RANK[target] ?? 0) > (STATUS_RANK[current] ?? 0);
+}
+
+/**
+ * Read reactions on recent Slack digest replies and reflect them in Notion Status
+ * (⭐ → Starred, ✅/👀/👎 → Read). Best-effort: skipped on dry-run or without
+ * Slack + Notion credentials, and never throws.
+ */
+async function syncSlackReactions(): Promise<void> {
+  if (env.DRY_RUN) return;
+  if (!env.SLACK_BOT_TOKEN || !env.SLACK_CHANNEL_ID) return;
+  if (!env.NOTION_API_KEY || !env.NOTION_DATABASE_ID) return;
+
+  console.log("[0/5] Syncing Slack reactions to Notion...");
+  try {
+    const results = await fetchDigestReactions();
+    if (results.length === 0) {
+      console.log("  No reactions to sync\n");
+      return;
+    }
+
+    let updated = 0;
+    for (const { url, action } of results) {
+      const page = await getPageByUrl(url);
+      if (!page || !shouldAdvance(page.status, action)) continue;
+      await updateStatus(page.pageId, action);
+      updated++;
+      console.log(`  ✓ ${action}: ${url}`);
+    }
+    console.log(`  Updated ${updated} article(s) from reactions\n`);
+  } catch (err) {
+    console.warn("  ⚠ Slack reaction sync failed:", err);
+  }
+}
+
 async function main() {
   const startTime = Date.now();
   console.log("=== AI News Collector ===");
   console.log(`Time: ${new Date().toISOString()}`);
   console.log(`Mode: ${env.DRY_RUN ? "DRY RUN" : "LIVE"}`);
   console.log();
+
+  // ── Step 0: Sync Slack reactions back to Notion (Phase 5B, best-effort) ──
+  await syncSlackReactions();
 
   // ── Step 1: Fetch from all sources in parallel ──
   console.log("[1/5] Fetching from sources...");

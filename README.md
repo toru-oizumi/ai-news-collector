@@ -7,6 +7,7 @@ Runs two daily jobs: **collect** (fetch & summarize) and **digest** (detailed an
 
 ```text
 [Job 1: collect]  every 6h (00:00 / 06:00 / 12:00 / 18:00 UTC)
+├─ Sync Slack reactions → Notion Status (⭐→Starred, ✅/👀/👎→Read; best-effort)
 ├─ Fetch (parallel)
 │  ├─ RSS: OpenAI, DeepMind, Google AI, Meta AI, NVIDIA, AWS, arXiv,
 │  │        + practitioner: Simon Willison, Import AI, Latent Space, Changelog, GitHub Trending
@@ -17,7 +18,8 @@ Runs two daily jobs: **collect** (fetch & summarize) and **digest** (detailed an
 ├─ Notion Dedup (exclude existing URLs)
 ├─ Select (per-source cap so one high-volume source can't fill every slot)
 ├─ Summarize (Mistral Small → short Japanese summary, 2-3 sentences)
-└─ Push to Notion Database (Status: "Unread")
+├─ Push to Notion Database (Status: "Unread")
+└─ Post digest to Slack (parent message + one threaded reply per article)
 
 [Job 2: digest]  2h after each collect run
 ├─ Query Notion (Status="Unread", top 30 by Score)
@@ -68,7 +70,26 @@ Get a free API Key from [Mistral AI Console](https://console.mistral.ai/) → AP
    - `NOTION_DATABASE_ID`
    - `MISTRAL_API_KEY`
 
-### 4. Local Setup
+### 4. Slack (optional)
+
+Set `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` (both) to post a digest after each collect run
+and to sync reactions back to Notion. Leave them unset to disable.
+
+- **Bot Token Scopes**: `chat:write` (post), `channels:history` (or `groups:history` for a
+  private channel), `reactions:read` (read reactions). Invite the bot to the target channel.
+- The digest is posted as a **parent message + one threaded reply per article**, so reactions
+  land on individual articles.
+- **React to curate** — the next collect run reflects reactions into Notion Status:
+
+  | Reaction | Notion Status |
+  |---|---|
+  | ⭐ `:star:` / 🔖 `:bookmark:` | **Starred** |
+  | ✅ `:white_check_mark:` / 👀 `:eyes:` / 👎 `:-1:` | **Read** |
+
+  Reactions only advance status forward (`Unread`/`Digested` → `Read` → `Starred`); a status you
+  set manually is never overwritten.
+
+### 5. Local Setup
 
 ```bash
 # Install Node.js 24 via mise
