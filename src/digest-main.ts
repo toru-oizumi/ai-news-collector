@@ -13,16 +13,28 @@ interface ArticleRow {
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
+// Retry rate limits (429), server errors (5xx), and transport/network failures
+// (e.g. the intermittent node-fetch "Premature close" drops — see TOR-71).
+function isRetryable(err: unknown): boolean {
+  if (err instanceof APIResponseError) return err.status === 429 || err.status >= 500;
+  return true;
+}
+
 async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      const isRateLimit = err instanceof APIResponseError && err.status === 429;
       const hasRetry = attempt < RETRY_DELAYS_MS.length;
-      if (isRateLimit && hasRetry) {
+      if (hasRetry && isRetryable(err)) {
         const delay = RETRY_DELAYS_MS[attempt];
-        console.warn(`[Notion] Rate limited on "${label}" — retrying in ${delay / 1000}s...`);
+        const reason =
+          err instanceof APIResponseError
+            ? `HTTP ${err.status}`
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        console.warn(`[Notion] "${label}" failed (${reason}) — retrying in ${delay / 1000}s...`);
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
@@ -86,7 +98,14 @@ async function main() {
     process.exit(1);
   }
 
-  const notion = new Client({ auth: env.NOTION_API_KEY });
+  // Use native fetch (undici) rather than the client's default node-fetch, which
+  // intermittently fails with "Premature close" on Node 24 (TOR-71).
+  const notion = new Client({
+    auth: env.NOTION_API_KEY,
+    fetch: fetch as unknown as NonNullable<
+      NonNullable<ConstructorParameters<typeof Client>[0]>["fetch"]
+    >,
+  });
 
   // 1. Query Notion DB for articles to process
   console.log("[1/4] Querying Notion for unprocessed articles...");
