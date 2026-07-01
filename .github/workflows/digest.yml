@@ -13,7 +13,10 @@ on:
 jobs:
   digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The digest loop is sequential and rate-limited (Mistral 2 RPM → ~62s/article for
+    # digest + translation), and it clears a backlog of Unread articles. Public repo,
+    # so Actions minutes are free — give it headroom beyond the collect job's 45 min.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +29,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Cache the browser download so it isn't refetched every run (~167MB) — this also
+      # shrinks the surface for the flaky/hung CDN download that once ate the whole job.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # A headless browser is only needed for openai.com bodies; every other source uses
+      # cheerio, and fetcher.ts returns [] when the browser can't launch. So keep this step
+      # time-boxed and non-fatal: if the install hangs or fails, digest still runs and only
+      # OpenAI bodies degrade to empty — it can no longer cancel the entire job (TOR-70).
       - name: Install Playwright Chromium
+        timeout-minutes: 10
+        continue-on-error: true
         run: npx playwright install chromium --with-deps
 
       - name: Generate digests and translations
