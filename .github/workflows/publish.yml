@@ -1,0 +1,62 @@
+name: Publish site
+
+# Chained from collect.yml, never scheduled on its own — a standalone scheduled
+# workflow is what GitHub kept auto-disabling for inactivity (see collect.yml).
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Job-level so the deploy step's `if` can read them. Secrets are not available in
+    # a step's own `env` block at the time its `if` is evaluated.
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install collector dependencies
+        run: npm ci
+
+      # Notion → web/src/data/articles.json. Keeping Notion access in the collector
+      # package means the site build needs no credentials of its own.
+      - name: Export Notion snapshot
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: npm run export:web
+
+      - name: Install site dependencies
+        working-directory: web
+        run: npm ci
+
+      # Builds even without Cloudflare secrets, so a broken site build still fails
+      # loudly rather than hiding behind a skipped deploy.
+      - name: Build site
+        working-directory: web
+        run: npm run build
+
+      # wrangler compares hashes and uploads only changed assets. The month archive is
+      # built so earlier months stay byte-identical between runs, so a typical publish
+      # re-uploads the front page, the current month and the facet views — not all 557.
+      - name: Deploy to Cloudflare Workers
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
+        working-directory: web
+        run: npx wrangler deploy
+
+      # Optional, like the Slack integration: no Cloudflare secrets means no deploy,
+      # and that should read as a deliberate skip rather than a silent success.
+      - name: Report skipped deploy
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == '' }}
+        run: |
+          echo "::notice::Site built but not deployed — set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to publish."

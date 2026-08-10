@@ -1,0 +1,92 @@
+---
+/**
+ * One article as a row in the ranked feed, with its score drawn on the shared rail.
+ */
+
+interface Props {
+  title: string;
+  url: string;
+  source: string;
+  category: string[];
+  score: number;
+  summary: string;
+  date: string | null;
+  status: string;
+  lang: string;
+  notionUrl: string;
+  /** Row position on the page, used to stagger the bar-draw animation. */
+  index?: number;
+}
+
+const { title, url, source, category, score, summary, date, status, lang, notionUrl, index = 0 } =
+  Astro.props;
+
+/**
+ * Rows are for deciding what to open, so the summary is trimmed to about three lines.
+ * Notion summaries run to 2,000 characters and the digest job adds more; fifty of those
+ * stacked in a list is a wall of text nobody reads, and it made each built page ~66 KB.
+ * The full text is one click away on the Notion link.
+ */
+const SUMMARY_LIMIT = 180;
+const excerpt =
+  summary.length > SUMMARY_LIMIT ? `${summary.slice(0, SUMMARY_LIMIT).trimEnd()}…` : summary;
+
+/**
+ * Fixed domain, so a bar means the same length on every page.
+ *
+ * The ceiling is p95 of the corpus (30 / p50 65 / p90 95 / max 200), not the maximum:
+ * scaling to 200 left 90% of bars under half the rail and the chart read as scattered
+ * ticks. The ~200 rows above the ceiling clamp to full width, which is the right
+ * reading anyway — "off the scale".
+ */
+const RAIL_MIN = 30;
+const RAIL_MAX = 110;
+const fraction = (score - RAIL_MIN) / (RAIL_MAX - RAIL_MIN);
+const barWidth = `${Math.min(100, Math.max(3, Math.round(fraction * 100)))}%`;
+
+// Cap the stagger so rows far down the page don't wait on a long cascade.
+const barDelay = `${Math.min(index, 24) * 14}ms`;
+
+const isStarred = status === "Starred";
+const classes = [
+  "row",
+  isStarred && "row--starred",
+  lang === "ja" && !isStarred && "row--ja",
+]
+  .filter(Boolean)
+  .join(" ");
+
+const sourceHref = `/source/${encodeURIComponent(source)}/`;
+---
+
+<article class={classes}>
+  <div class="row__score">{score}</div>
+  <div class="row__rail" aria-hidden="true">
+    <div class="row__bar" style={`--bar-width:${barWidth};--bar-delay:${barDelay}`}></div>
+  </div>
+  <div class="row__body">
+    <a class="row__title" href={url} target="_blank" rel="noopener noreferrer">{title}</a>
+    <div class="row__meta">
+      <a class="row__meta-source" href={sourceHref}>{source}</a>
+      {date && <span>{date}</span>}
+      {isStarred && <span class="row__meta-star">★</span>}
+      {
+        notionUrl && (
+          /* Repeated on every row, it competed with the source name for attention.
+             Revealed on hover, and always present for keyboard and screen readers. */
+          <a class="row__notion" href={notionUrl} target="_blank" rel="noopener noreferrer">
+            Notion
+          </a>
+        )
+      }
+    </div>
+    {excerpt && <p class="row__summary">{excerpt}</p>}
+    {category.length > 0 && (
+      <div class="row__cats">
+        {category.map((c) => (
+          <a class="tag" href={`/category/${encodeURIComponent(c)}/`}>{c}</a>
+        ))}
+      </div>
+    )}
+  </div>
+</article>

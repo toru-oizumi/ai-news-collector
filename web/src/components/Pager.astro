@@ -1,0 +1,28 @@
+---
+interface Props {
+  prev?: string | undefined;
+  next?: string | undefined;
+  current: number;
+  last: number;
+  prevLabel?: string;
+  nextLabel?: string;
+  /** Set on the front page so the toolbar can hide it while filtering. */
+  id?: string;
+}
+
+const {
+  prev,
+  next,
+  current,
+  last,
+  prevLabel = "← 前へ",
+  nextLabel = "次へ →",
+  id,
+} = Astro.props;
+---
+
+<nav class="pager" id={id} aria-label="ページ送り">
+  {prev ? <a href={prev}>{prevLabel}</a> : <span class="pager__spacer">←</span>}
+  <span>{current} / {last}</span>
+  {next ? <a href={next}>{nextLabel}</a> : <span class="pager__spacer">→</span>}
+</nav>

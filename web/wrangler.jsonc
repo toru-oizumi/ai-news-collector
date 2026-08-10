@@ -1,0 +1,13 @@
+{
+  // Static-assets-only Worker: no server code, just the Astro build output.
+  // Restrict public access with a Cloudflare Access application on this Worker's
+  // hostname (Zero Trust → Access → Applications) — it is not configured here.
+  "name": "ai-news-web",
+  "compatibility_date": "2026-08-01",
+  "assets": {
+    "directory": "./dist",
+    // Astro emits directory-style routes with an index.html per page.
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

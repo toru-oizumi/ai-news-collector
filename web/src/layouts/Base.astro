@@ -1,0 +1,37 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  /** Total articles in the snapshot, shown in the masthead. */
+  total: number;
+  /** What the current page is showing, e.g. "すべて" or "はてブ". */
+  scope?: string;
+}
+
+const { title, total, scope } = Astro.props;
+---
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Private, Access-gated tool: keep it out of indexes even if the hostname leaks. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="masthead">
+        <h1 class="masthead__title"><a href="/">藍 · AI News</a></h1>
+        <span class="masthead__count">{total.toLocaleString("ja-JP")} 記事</span>
+        <nav class="masthead__nav">
+          <a href="/">新着</a>
+          <a href="/archive/">月別</a>
+        </nav>
+        {scope && <p class="masthead__scope">{scope}</p>}
+      </header>
+      <slot />
+    </div>
+  </body>
+</html>

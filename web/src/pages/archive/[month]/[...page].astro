@@ -1,0 +1,51 @@
+---
+import { getCollection } from "astro:content";
+import type { GetStaticPaths, Page } from "astro";
+import Feed from "../../../components/Feed.astro";
+import Pager from "../../../components/Pager.astro";
+import Base from "../../../layouts/Base.astro";
+import { type Article, formatMonth, groupByMonth, PER_PAGE } from "../../../lib/articles";
+
+/**
+ * One month of collected articles, in collection order.
+ *
+ * Grouping by month rather than paginating the whole archive keeps these URLs stable:
+ * new articles only ever change the current month, so every earlier month's pages stay
+ * byte-identical between publishes and wrangler skips re-uploading them.
+ */
+export const getStaticPaths = (async ({ paginate }) => {
+  const entries = await getCollection("articles");
+  const months = groupByMonth(entries.map((e) => e.data));
+
+  return [...months.entries()].flatMap(([month, articles]) =>
+    paginate(articles, { params: { month }, pageSize: PER_PAGE })
+  );
+}) satisfies GetStaticPaths;
+
+interface Props {
+  page: Page<Article>;
+}
+
+const { month } = Astro.params;
+const { page } = Astro.props as Props;
+---
+
+<Base
+  title={`${formatMonth(month!)} · 藍 · AI News`}
+  total={page.total}
+  scope={`${formatMonth(month!)} — 収集順 · ${page.currentPage} / ${page.lastPage} ページ`}
+>
+  <nav class="pager" style="border-bottom:1px solid var(--rule);padding-bottom:1rem">
+    <a href="/archive/">← 月別アーカイブ</a>
+    <a href="/">新着 →</a>
+  </nav>
+
+  <Feed articles={page.data} groupByDate />
+
+  <Pager
+    prev={page.url.prev}
+    next={page.url.next}
+    current={page.currentPage}
+    last={page.lastPage}
+  />
+</Base>

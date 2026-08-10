@@ -1,5 +1,5 @@
 import { APIResponseError, Client } from "@notionhq/client";
-import { env } from "../config.js";
+import { SOURCE_META, env } from "../config.js";
 import type { Article } from "../types.js";
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000]; // 3 retries with backoff
@@ -71,6 +71,159 @@ export async function getExistingUrls(): Promise<Set<string>> {
   } while (cursor);
 
   return urls;
+}
+
+// ── Read the whole database for the static site export (Phase B) ──
+
+/** One row as published to the static site. Dates are ISO date strings (YYYY-MM-DD)
+ *  because they cross a JSON boundary; the site parses them back with zod. */
+export interface ExportedArticle {
+  /** Notion page id — used as the Astro content collection entry id. */
+  id: string;
+  title: string;
+  url: string;
+  source: string;
+  category: string[];
+  score: number;
+  summary: string;
+  published: string | null;
+  fetched: string | null;
+  status: string;
+  lang: string;
+  kind: string;
+  /** Notion page URL, so the site can link back to the editable record. */
+  notionUrl: string;
+}
+
+/** Notion's query-result property union is very broad. These narrow shapes describe
+ *  only what we read, matching the loose-cast approach used elsewhere in this file. */
+interface RawProps {
+  Title?: { title?: { plain_text?: string }[] };
+  URL?: { url?: string | null };
+  Source?: { select?: { name?: string } | null };
+  Category?: { multi_select?: { name?: string }[] };
+  Score?: { number?: number | null };
+  Summary?: { rich_text?: { plain_text?: string }[] };
+  Published?: { date?: { start?: string } | null };
+  Fetched?: { date?: { start?: string } | null };
+  Status?: { select?: { name?: string } | null };
+  Lang?: { select?: { name?: string } | null };
+  Kind?: { select?: { name?: string } | null };
+}
+
+function joinRichText(parts: { plain_text?: string }[] | undefined): string {
+  // Notion splits long text into multiple rich-text chunks; reading only [0] would
+  // truncate any summary that carries formatting or exceeds the chunk size.
+  return (parts ?? []).map((p) => p.plain_text ?? "").join("");
+}
+
+function toExported(page: {
+  id: string;
+  properties: unknown;
+  url?: string;
+}): ExportedArticle | null {
+  const props = page.properties as RawProps;
+
+  const url = props.URL?.url ?? "";
+  const title = joinRichText(props.Title?.title);
+  // A row with no URL or title can't be rendered as a link — skip rather than
+  // emit an entry the site would have to special-case.
+  if (!url || !title) return null;
+
+  const source = props.Source?.select?.name ?? "Unknown";
+  // Rows collected before Lang/Kind existed have neither property. Deriving them from
+  // the source name classifies the whole back catalogue correctly instead of labelling
+  // 20k rows "English primary" — those rows are never re-collected (URL dedup), so
+  // without this the site's language and tier filters would stay useless on all history.
+  const meta = SOURCE_META[source as keyof typeof SOURCE_META];
+
+  return {
+    id: page.id,
+    title,
+    url,
+    source,
+    category: (props.Category?.multi_select ?? [])
+      .map((c) => c.name ?? "")
+      .filter((name) => name !== ""),
+    score: props.Score?.number ?? 0,
+    summary: joinRichText(props.Summary?.rich_text),
+    published: props.Published?.date?.start ?? null,
+    fetched: props.Fetched?.date?.start ?? null,
+    status: props.Status?.select?.name ?? "Unread",
+    lang: props.Lang?.select?.name ?? meta?.lang ?? "en",
+    kind: props.Kind?.select?.name ?? meta?.kind ?? "primary",
+    notionUrl: page.url ?? "",
+  };
+}
+
+/**
+ * Read every row in the database, newest first, for the static site export.
+ *
+ * Cursor pagination alone is not enough: `databases.query` stops returning results
+ * after ~10,000 rows in a single cursor chain — `has_more` simply goes false, so a
+ * naive do/while loop silently truncates the oldest history (observed: 10,000 rows
+ * returned while the database held two further months). So we walk backwards in time
+ * instead, re-anchoring the query with a `Fetched on_or_before` bound each time a
+ * chain ends, and stop when a window yields nothing new.
+ *
+ * Properties only — the digest lives in the page body and fetching blocks would cost
+ * one request per row.
+ */
+export async function getAllArticles(): Promise<ExportedArticle[]> {
+  const client = getClient();
+  const byId = new Map<string, ExportedArticle>();
+  let before: string | undefined;
+  let requests = 0;
+
+  for (;;) {
+    const sizeBeforeWindow = byId.size;
+    let oldestSeen: string | undefined;
+    let cursor: string | undefined;
+
+    do {
+      const res = await withRetry(
+        () =>
+          client.databases.query({
+            database_id: env.NOTION_DATABASE_ID,
+            start_cursor: cursor,
+            page_size: 100,
+            filter: {
+              and: [
+                { property: "URL", url: { is_not_empty: true } },
+                // `on_or_before` (not `before`) so rows sharing the boundary date are
+                // not skipped; the id map removes the resulting overlap.
+                ...(before ? [{ property: "Fetched", date: { on_or_before: before } }] : []),
+              ],
+            },
+            sorts: [{ property: "Fetched", direction: "descending" }],
+          }),
+        "databases.query(export)"
+      );
+      requests++;
+
+      for (const page of res.results) {
+        if (!("properties" in page)) continue;
+        const article = toExported(page);
+        if (!article) continue;
+        byId.set(article.id, article);
+        if (article.fetched && (!oldestSeen || article.fetched < oldestSeen)) {
+          oldestSeen = article.fetched;
+        }
+      }
+
+      cursor = res.has_more ? (res.next_cursor ?? undefined) : undefined;
+    } while (cursor);
+
+    // Nothing new in this window: either we've reached the end of the database, or
+    // a single Fetched date holds more rows than one chain can return. Either way,
+    // advancing the bound again would loop forever.
+    if (byId.size === sizeBeforeWindow || !oldestSeen) break;
+    before = oldestSeen;
+  }
+
+  const articles = [...byId.values()];
+  console.log(`[Notion] Exported ${articles.length} articles across ${requests} request(s)`);
+  return articles;
 }
 
 // ── Look up a page by URL / update its Status (Phase 5B reaction sync) ──

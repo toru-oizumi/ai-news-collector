@@ -41,8 +41,19 @@ GitHub Actions で毎朝 09:00 JST (00:00 UTC) に実行される。
 │   │       ├── dedup.test.ts
 │   │       ├── keywords.test.ts
 │   │       └── scorer.test.ts
-│   └── notion/
-│       └── client.ts        # Notion API クライアント (読み書き・重複確認)
+│   ├── notion/
+│   │   └── client.ts        # Notion API クライアント (読み書き・重複確認・全件エクスポート)
+│   └── export/
+│       └── articles-json.ts # Notion → web/src/data/articles.json スナップショット
+├── web/                     # 閲覧サイト (Astro SSG / 独立パッケージ)
+│   ├── src/
+│   │   ├── content.config.ts    # file() loader + zod スキーマ (ビルド時の契約)
+│   │   ├── lib/articles.ts      # 並び順・グルーピング・各種上限
+│   │   ├── components/          # ArticleRow / Feed / Toolbar / Pager
+│   │   ├── layouts/Base.astro
+│   │   ├── pages/               # 新着 / archive / source / category / search-index.json
+│   │   └── styles/global.css    # デザイントークン
+│   └── wrangler.jsonc       # Workers Static Assets (Worker スクリプトなし)
 ├── .github/
 │   └── workflows/
 │       └── collect.yml      # GitHub Actions ワークフロー
@@ -64,6 +75,15 @@ mise install               # Node.js 24 をインストール
 # 実行
 npm run collect            # 本番実行 (Notion + Mistral 使用)
 npm run collect:dry        # ドライラン (外部 API 呼び出しなし)
+
+# 閲覧サイト (web/ は独立パッケージ)
+npm run export:web         # Notion → web/src/data/articles.json
+cd web && npm run dev      # ローカル起動 (localhost:4321)
+cd web && npm run build    # SSG ビルド → web/dist
+cd web && npx wrangler deploy  # Cloudflare Workers へデプロイ
+
+# .env は npm script では読まれない (VS Code の launch.json のみ)。CLI から使う場合:
+node --env-file=.env --import tsx src/export/articles-json.ts
 
 # テスト
 npm test                   # vitest watch モード
@@ -118,6 +138,26 @@ Push to Notion Database
 `keywordBonus` は日本語テキストにも適用されるため、日本語相当語を既存ルールに
 同居させている (`"agent"` の隣に `"エージェント"` など)。これがないと日本語記事は
 base + crowd だけで並び、深い検証記事と雑記が区別できなくなる。
+
+## 閲覧サイト (web/)
+
+Notion → JSON スナップショット → Astro SSG の 3 段。Astro から Notion を直接読まない
+(Notion アクセスをルートパッケージの実装に一本化し、サイトのビルドに秘密情報を要らなくする)。
+
+変更する前に把握しておくべき設計判断:
+
+- **並び順は `fetched`（収集日）で、表示は `published`。** アグリゲータは古い記事を再浮上
+  させるため、直近90日に収集した約2,800件は published が90日より古い。日付グループ見出しで
+  実際の並び順キーを明示しないと、順序が無根拠に見える。
+- **月別アーカイブは差分デプロイのため。** 全archiveを連番ページにすると記事追加で全ページの
+  内容がずれ、毎回全ページを再アップロードすることになる。月別なら当月以外は byte 一致。
+- **source / category ビューは `FACET_LIMIT` で上限。** 無制限だとカテゴリ一覧だけで
+  21,020記事が82,661行・1,659ページに展開され、ビルドの110MBを占めた。
+- **`getAllArticles()` は日付で窓を切って遡る。** Notion の `databases.query` は単一カーソル
+  チェーンで約10,000件を超えると `has_more` が false になり、素朴なページングでは古い履歴が
+  黙って欠落する（実測: DB に21,020件あるのに10,000件で打ち切られた）。
+- **検索対象はタイトル・ソース・カテゴリのみ**（要約は含めない）。90字の抜粋を入れるだけで
+  インデックスが約370KB→約1.1MB (gzip) に膨らんだ。入力欄の placeholder にその旨を明記。
 
 ---
 
@@ -186,6 +226,8 @@ base + crowd だけで並び、深い検証記事と雑記が区別できなく�
 | `SLACK_BOT_TOKEN` | 任意 | Slack Bot Token (`xoxb-…`, `chat:write` 権限)。設定時のみ収集後にダイジェスト投稿 |
 | `SLACK_CHANNEL_ID` | 任意 | 投稿先チャンネル ID。Bot を事前に招待しておく必要あり |
 | `QIITA_TOKEN` | 任意 | Qiita API のレート上限を 60→1000 req/h に引き上げ。未設定でも動作 |
+| `CLOUDFLARE_API_TOKEN` | 任意 | 閲覧サイトのデプロイ用 (Workers Scripts: Edit)。未設定ならビルドのみ |
+| `CLOUDFLARE_ACCOUNT_ID` | 任意 | 同上 |
 
 ローカル開発では `.env` ファイルに記述 (`.gitignore` 済み)。
 ドライラン (`--dry-run`) では環境変数不要。

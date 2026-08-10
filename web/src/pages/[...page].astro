@@ -1,0 +1,47 @@
+---
+import { getCollection } from "astro:content";
+import type { GetStaticPaths, Page } from "astro";
+import Feed from "../components/Feed.astro";
+import Pager from "../components/Pager.astro";
+import Toolbar from "../components/Toolbar.astro";
+import Base from "../layouts/Base.astro";
+import { type Article, byNewest, PER_PAGE, RECENT_LIMIT } from "../lib/articles";
+
+export const getStaticPaths = (async ({ paginate }) => {
+  const entries = await getCollection("articles");
+  const recent = entries.map((e) => e.data).sort(byNewest).slice(0, RECENT_LIMIT);
+  return paginate(recent, { pageSize: PER_PAGE });
+}) satisfies GetStaticPaths;
+
+interface Props {
+  page: Page<Article>;
+}
+
+const { page } = Astro.props as Props;
+
+// The masthead count is the whole archive, not this page's slice.
+const entries = await getCollection("articles");
+const total = entries.length;
+---
+
+<Base
+  title="藍 · AI News"
+  total={total}
+  scope="収集順。スコアは ソース重み + キーワード + 反応数 の合計。"
+>
+  <Toolbar />
+  <Feed articles={page.data} id="base-feed" groupByDate />
+  <Pager
+    id="base-pager"
+    prev={page.url.prev}
+    next={page.url.next}
+    current={page.currentPage}
+    last={page.lastPage}
+    prevLabel="← 新しい"
+    nextLabel="古い →"
+  />
+  <p class="afterword">
+    直近 {RECENT_LIMIT} 件を表示しています。それより前は
+    <a href="/archive/">月別アーカイブ</a> から辿れます。
+  </p>
+</Base>

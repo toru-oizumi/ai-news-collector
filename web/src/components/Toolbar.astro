@@ -1,0 +1,242 @@
+---
+/**
+ * Search and filters. Both operate on /search-index.json (a recent window of the
+ * archive), fetched on first use. While a query or filter is active the results
+ * replace the server-rendered feed; clearing everything restores it.
+ *
+ * The index carries no summaries, so the placeholder states what is actually searched
+ * rather than implying full-text search. Keep the window in step with
+ * SEARCH_WINDOW_DAYS in src/pages/search-index.json.ts.
+ */
+const SEARCH_WINDOW_DAYS = 90;
+const LABEL = `タイトル・ソース・カテゴリを検索（直近 ${SEARCH_WINDOW_DAYS} 日）`;
+---
+
+<div class="toolbar">
+  <input
+    id="q"
+    class="toolbar__search"
+    type="search"
+    autocomplete="off"
+    placeholder={LABEL}
+    aria-label={LABEL}
+  />
+  <div class="toolbar__filters" role="group" aria-label="絞り込み">
+    <button class="chip" type="button" data-filter="ja" aria-pressed="false">日本語</button>
+    <button class="chip" type="button" data-filter="primary" aria-pressed="false">一次情報</button>
+    <button class="chip" type="button" data-filter="starred" aria-pressed="false">★</button>
+  </div>
+</div>
+
+<div id="results" hidden>
+  <p class="masthead__count" id="results-count" aria-live="polite"></p>
+  <div class="feed" id="results-feed"></div>
+</div>
+
+<div class="empty" id="results-empty" hidden>
+  条件に合う記事がありません。
+  <div class="empty__hint">検索語を短くするか、絞り込みを外してください。</div>
+</div>
+
+<script>
+  /** Tuple layout emitted by src/pages/search-index.json.ts — keep the two in sync. */
+  type Row = [
+    title: string,
+    url: string,
+    source: string,
+    categories: string,
+    score: number,
+    date: string | null,
+    status: string,
+    lang: string,
+    kind: string,
+  ];
+
+  interface Item {
+    title: string;
+    url: string;
+    source: string;
+    category: string[];
+    score: number;
+    date: string | null;
+    status: string;
+    lang: string;
+    kind: string;
+    /** Pre-folded haystack, built once at load instead of on every keystroke. */
+    haystack: string;
+  }
+
+  const RAIL_MIN = 30;
+  const RAIL_MAX = 150;
+  const MAX_RESULTS = 200;
+
+  const input = document.getElementById("q") as HTMLInputElement;
+  const chips = [...document.querySelectorAll<HTMLButtonElement>(".chip[data-filter]")];
+  const results = document.getElementById("results") as HTMLElement;
+  const resultsFeed = document.getElementById("results-feed") as HTMLElement;
+  const resultsCount = document.getElementById("results-count") as HTMLElement;
+  const resultsEmpty = document.getElementById("results-empty") as HTMLElement;
+  // The server-rendered listing this view replaces while filtering is active.
+  const baseFeed = document.getElementById("base-feed");
+  const basePager = document.getElementById("base-pager");
+
+  let index: Item[] | null = null;
+  let loading: Promise<Item[]> | null = null;
+
+  /** NFKC folds full-width Latin and half-width kana so "ＡＩ" and "AI" both match. */
+  function fold(value: string): string {
+    return value.normalize("NFKC").toLowerCase();
+  }
+
+  function toItem(row: Row): Item {
+    const [title, url, source, categories, score, date, status, lang, kind] = row;
+    const category = categories ? categories.split("|") : [];
+    return {
+      title,
+      url,
+      source,
+      category,
+      score,
+      date,
+      status,
+      lang,
+      kind,
+      haystack: fold(`${title} ${source} ${category.join(" ")}`),
+    };
+  }
+
+  function loadIndex(): Promise<Item[]> {
+    if (index) return Promise.resolve(index);
+    if (!loading) {
+      loading = fetch("/search-index.json")
+        .then((res) => {
+          if (!res.ok) throw new Error(`search index: ${res.status}`);
+          return res.json() as Promise<{ items: Row[] }>;
+        })
+        .then((payload) => {
+          const data = payload.items.map(toItem);
+          index = data;
+          return data;
+        })
+        .catch((err) => {
+          // Leave the server-rendered list in place rather than blanking the page.
+          console.error(err);
+          resultsCount.textContent = "検索データを読み込めませんでした。";
+          return [];
+        });
+    }
+    return loading;
+  }
+
+  function activeFilters(): Set<string> {
+    return new Set(
+      chips.filter((c) => c.getAttribute("aria-pressed") === "true").map((c) => c.dataset.filter!)
+    );
+  }
+
+  function escapeHtml(value: string): string {
+    return value.replace(
+      /[&<>"']/g,
+      (ch) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch
+    );
+  }
+
+  function rowHtml(item: Item, i: number): string {
+    // Mirrors ArticleRow.astro — keep the two in step when the row markup changes.
+    const fraction = (item.score - RAIL_MIN) / (RAIL_MAX - RAIL_MIN);
+    const width = Math.min(100, Math.max(3, Math.round(fraction * 100)));
+    const delay = Math.min(i, 24) * 14;
+    const starred = item.status === "Starred";
+    const cls = ["row", starred && "row--starred", item.lang === "ja" && !starred && "row--ja"]
+      .filter(Boolean)
+      .join(" ");
+
+    const meta = [
+      `<a class="row__meta-source" href="/source/${encodeURIComponent(item.source)}/">${escapeHtml(item.source)}</a>`,
+      item.date ? `<span>${escapeHtml(item.date)}</span>` : "",
+      starred ? '<span class="row__meta-star">★</span>' : "",
+    ].join("");
+
+    const cats = item.category
+      .map(
+        (c) =>
+          `<a class="tag" href="/category/${encodeURIComponent(c)}/">${escapeHtml(c)}</a>`
+      )
+      .join("");
+
+    return `<article class="${cls}">
+      <div class="row__score">${item.score}</div>
+      <div class="row__rail" aria-hidden="true">
+        <div class="row__bar" style="--bar-width:${width}%;--bar-delay:${delay}ms"></div>
+      </div>
+      <div class="row__body">
+        <a class="row__title" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>
+        <div class="row__meta">${meta}</div>
+        ${cats ? `<div class="row__cats">${cats}</div>` : ""}
+      </div>
+    </article>`;
+  }
+
+  function showBaseListing(): void {
+    results.hidden = true;
+    resultsEmpty.hidden = true;
+    baseFeed?.removeAttribute("hidden");
+    basePager?.removeAttribute("hidden");
+  }
+
+  async function apply(): Promise<void> {
+    const query = fold(input.value.trim());
+    const filters = activeFilters();
+
+    if (!query && filters.size === 0) {
+      showBaseListing();
+      return;
+    }
+
+    const items = await loadIndex();
+    const matched = items.filter((item) => {
+      if (filters.has("ja") && item.lang !== "ja") return false;
+      if (filters.has("primary") && item.kind !== "primary") return false;
+      if (filters.has("starred") && item.status !== "Starred") return false;
+      if (!query) return true;
+      // Every whitespace-separated term must appear, so terms narrow rather than widen.
+      return query.split(/\s+/).every((term) => item.haystack.includes(term));
+    });
+
+    baseFeed?.setAttribute("hidden", "");
+    basePager?.setAttribute("hidden", "");
+
+    if (matched.length === 0) {
+      results.hidden = true;
+      resultsEmpty.hidden = false;
+      return;
+    }
+
+    resultsEmpty.hidden = true;
+    results.hidden = false;
+    const shown = matched.slice(0, MAX_RESULTS);
+    resultsCount.textContent =
+      matched.length > shown.length
+        ? `${matched.length.toLocaleString("ja-JP")} 件中 上位 ${shown.length} 件`
+        : `${matched.length.toLocaleString("ja-JP")} 件`;
+    resultsFeed.innerHTML = shown.map(rowHtml).join("");
+  }
+
+  let debounce: number | undefined;
+  input.addEventListener("input", () => {
+    window.clearTimeout(debounce);
+    debounce = window.setTimeout(apply, 120);
+  });
+
+  for (const chip of chips) {
+    chip.addEventListener("click", () => {
+      const pressed = chip.getAttribute("aria-pressed") === "true";
+      chip.setAttribute("aria-pressed", String(!pressed));
+      void apply();
+    });
+  }
+
+  // Warm the index on focus so the first keystroke renders without a visible wait.
+  input.addEventListener("focus", () => void loadIndex(), { once: true });
+</script>

@@ -35,7 +35,15 @@ Runs two daily jobs: **collect** (fetch & summarize) and **digest** (detailed an
 │     ─────────
 │     🇯🇵 日本語全文訳
 └─ Update Status: "Unread" → "Digested"
+
+[Job 3: publish]  chained after digest (same workflow)
+├─ Export Notion → web/src/data/articles.json (properties only, one snapshot)
+├─ Astro SSG build (output: "static", no adapter)
+└─ wrangler deploy → Cloudflare Workers Static Assets
 ```
+
+The site is a read-only view; Notion stays the place you edit (and the Slack reactions
+still drive Status). See [Browsing site](#browsing-site).
 
 ## Setup
 
@@ -106,7 +114,23 @@ The Qiita API v2 works unauthenticated at 60 requests/hour, and the collector us
 request per configured tag — so no token is needed. Set `QIITA_TOKEN` to raise the limit
 to 1000 requests/hour if you add many tags.
 
-### 6. Local Setup
+### 6. Cloudflare (optional)
+
+Needed only to publish the browsing site. Add two more secrets; without them the publish
+job still builds the site (so a broken build fails loudly) but skips the deploy.
+
+- `CLOUDFLARE_API_TOKEN` — a token with **Workers Scripts: Edit**
+- `CLOUDFLARE_ACCOUNT_ID`
+
+Then restrict access: Cloudflare dashboard → **Zero Trust → Access → Applications**, add a
+self-hosted application on the Worker's hostname and allow only your own email. This is
+dashboard configuration, not part of the repo.
+
+> **Check this before trusting it.** Open the site in a logged-out browser and confirm you
+> get Cloudflare's login screen rather than the page. Until you do, you have no evidence
+> the site isn't public.
+
+### 7. Local Setup
 
 ```bash
 # Install Node.js 24 via mise
@@ -127,6 +151,53 @@ npm run collect
 # Digest + translate run (requires Notion articles with Status="Unread")
 npm run digest
 ```
+
+The npm scripts read credentials from the environment, not from `.env` — only the VS Code
+launch configs load that file. To run a script against `.env` from a shell, pass it to Node:
+
+```bash
+node --env-file=.env --import tsx src/export/articles-json.ts
+```
+
+## Browsing site
+
+A static site under [`web/`](web/) renders the Notion database as a fast, searchable feed.
+It is a separate npm package; the root package owns Notion access.
+
+```bash
+npm run export:web              # Notion → web/src/data/articles.json (needs credentials)
+cd web && npm install
+npm run dev                     # http://localhost:4321
+npm run build && npx wrangler dev   # serve the build as Workers Static Assets
+npx wrangler deploy             # first deploy, by hand
+```
+
+Layout:
+
+| Route | Contents |
+|---|---|
+| `/` … `/4/` | The most recent 200 articles, grouped by collection date |
+| `/archive/` | Every month, with a bar per month's volume |
+| `/archive/2026-07/` | That month in collection order |
+| `/source/<name>/` | Top 200 from that source by score |
+| `/category/<name>/` | Top 200 in that category by score |
+| `/search-index.json` | Titles, sources and categories for the last 90 days |
+
+Design notes worth knowing before changing it:
+
+- **The site orders by collection date, not publish date.** Aggregators resurface old
+  material — around 2,800 rows collected in the last 90 days were published earlier than
+  that, some years earlier. Rows display the publish date, so the date group headers state
+  the real ordering key; without them the sequence looks arbitrary.
+- **The month archive exists to keep deploys incremental.** Numbered pages over the whole
+  archive would all shift whenever an article arrives, so every page would re-upload.
+  Grouping by month means only the current month changes, and wrangler skips the rest.
+- **The per-source and per-category views are capped** (`FACET_LIMIT`). Uncapped, the
+  category listings alone expanded 21,020 articles into 82,661 rows across 1,659 pages —
+  they were 110 MB of the build. They are "best of", not archives.
+- **Search covers titles, not summaries.** Including even a 90-character excerpt tripled
+  the index (~370 KB → ~1.1 MB gzipped). The placeholder text says so rather than implying
+  full-text search.
 
 ## Development
 

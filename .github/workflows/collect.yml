@@ -41,3 +41,11 @@ jobs:
     needs: collect
     uses: ./.github/workflows/digest.yml
     secrets: inherit
+
+  # Rebuild and deploy the static site once the digests are written, so the snapshot
+  # includes them. Chained for the same reason as digest — no `schedule` of its own.
+  # Skipped entirely if the Cloudflare secrets aren't set, like the Slack integration.
+  publish:
+    needs: digest
+    uses: ./.github/workflows/publish.yml
+    secrets: inherit

@@ -1,0 +1,526 @@
+/*
+ * Palette named from traditional Japanese pigments. The primary is 藍 (ai) — indigo —
+ * which is also how "AI" is read in Japanese, so the accent colour and the subject
+ * share a name. Paper is a cool grey-blue rather than cream: this is a readout, not
+ * a manuscript.
+ */
+:root {
+  color-scheme: light dark;
+
+  --paper: #f2f4f6;
+  --paper-raised: #ffffff;
+  --rule: #d9dee4;
+  --rule-strong: #bcc4ce;
+  --ink: #16181d;
+  --ink-soft: #5a6472;
+  --ai: #253a8c; /* 藍 */
+  --ai-wash: #e5e9f5;
+  --hakugun: #4d777d; /* 白群 */
+  --yamabuki: #9a7409; /* 山吹 — starred only */
+
+  --font-prose: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic",
+    "Noto Sans JP", "Segoe UI", sans-serif;
+  /* Every machine-computed value — score, votes, dates, source labels — is set in mono.
+   * The prose/mono split mirrors the content: written summaries vs. computed metadata. */
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", "Roboto Mono", Menlo,
+    monospace;
+
+  --rail-width: 4.5rem;
+  --score-width: 2.25rem;
+  --page-max: 68rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #14161a;
+    --paper-raised: #1c1f25;
+    --rule: #2a2f38;
+    --rule-strong: #3d4552;
+    --ink: #e6e9ed;
+    --ink-soft: #8a94a3;
+    --ai: #8aa2e8;
+    --ai-wash: #1e2537;
+    --hakugun: #7fa8ad;
+    --yamabuki: #d6a62a;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Japanese text needs a slightly looser default than Latin-only copy. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-prose);
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  font-feature-settings: "palt" 1; /* proportional kana/kanji spacing */
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ai);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ── Shell ────────────────────────────────────────────────────────────── */
+
+.shell {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 0 1.25rem 5rem;
+}
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.25rem;
+  padding: 2.25rem 0 1.25rem;
+}
+
+.masthead__title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ai);
+}
+
+.masthead__count {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.masthead__nav {
+  display: flex;
+  gap: 0.875rem;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.masthead__nav a:hover {
+  color: var(--ai);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.masthead__scope {
+  flex-basis: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: var(--hakugun);
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  align-items: center;
+  padding: 0.875rem 0 1.25rem;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 1.5rem;
+}
+
+.toolbar__search {
+  flex: 1 1 16rem;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-prose);
+  font-size: 0.875rem;
+}
+
+.toolbar__search::placeholder {
+  color: var(--ink-soft);
+}
+
+.toolbar__filters {
+  display: flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+}
+
+.chip {
+  padding: 0.3125rem 0.625rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--ai);
+  color: var(--ai);
+}
+
+.chip[aria-pressed="true"] {
+  border-color: var(--ai);
+  background: var(--ai-wash);
+  color: var(--ai);
+  font-weight: 600;
+}
+
+/* ── The score rail ───────────────────────────────────────────────────── */
+/*
+ * The signature element. Bars share a single baseline that runs unbroken down the
+ * page, so the list doubles as a bar chart of the ranking: you can see where the
+ * high-signal cluster ends before reading any text. Domain is fixed (see --rail-min
+ * /--rail-max in ArticleRow) so bar lengths stay comparable across pages.
+ */
+
+.feed {
+  border-bottom: 1px solid var(--rule);
+}
+
+/* Collection-date header. The rows below show publish dates, which run years back for
+ * aggregator sources — this states the actual ordering key so the sequence reads. */
+.feed__day {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+  margin: 0;
+  padding: 1.5rem 0 0.375rem;
+  border-top: 1px solid var(--rule-strong);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ai);
+}
+
+.feed__day:first-child {
+  padding-top: 0.25rem;
+  border-top: 0;
+}
+
+.feed__day-count {
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.row {
+  display: grid;
+  /* Tight gap between score and rail so the number reads as the bar's label rather
+   * than a separate column. */
+  grid-template-columns: var(--score-width) var(--rail-width) minmax(0, 1fr);
+  gap: 0 0.5rem;
+  padding: 0.875rem 0;
+  border-top: 1px solid var(--rule);
+  align-items: start;
+}
+
+.row > .row__body {
+  margin-left: 0.5rem;
+}
+
+.row:hover .row__title {
+  color: var(--ai);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.row__score {
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--ink);
+  padding-top: 0.0625rem;
+}
+
+/* The axis: a hairline at the rail's origin, drawn by every row, joining into one
+ * unbroken vertical line within each date group. */
+.row__rail {
+  position: relative;
+  height: 1.5rem;
+  border-left: 1px solid var(--rule-strong);
+}
+
+.row__bar {
+  position: absolute;
+  inset-block: 0.375rem;
+  left: 0;
+  width: var(--bar-width);
+  min-width: 1px;
+  background: var(--ai);
+  opacity: 0.85;
+}
+
+.row--starred .row__bar {
+  background: var(--yamabuki);
+  opacity: 1;
+}
+
+.row--ja .row__bar {
+  /* Japanese secondary sources are hatched rather than solid, so the mix of
+   * primary and commentary is legible at a glance without a legend. */
+  background: repeating-linear-gradient(
+    135deg,
+    var(--hakugun) 0 2px,
+    transparent 2px 4px
+  );
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .row__bar {
+    animation: draw 420ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+    animation-delay: var(--bar-delay, 0ms);
+  }
+
+  @keyframes draw {
+    from {
+      width: 0;
+    }
+  }
+}
+
+/* ── Row content ──────────────────────────────────────────────────────── */
+
+.row__title {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 0 0 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  margin-bottom: 0.375rem;
+}
+
+.row__meta a:hover {
+  color: var(--ai);
+  text-decoration: underline;
+}
+
+/* Present for keyboard and assistive tech, visible on hover/focus so it doesn't
+ * repeat fifty times down the page. */
+.row__notion {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.row:hover .row__notion,
+.row__notion:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  /* No hover on touch — keep it visible rather than unreachable. */
+  .row__notion {
+    opacity: 1;
+  }
+}
+
+.row__meta-source {
+  color: var(--hakugun);
+  font-weight: 600;
+}
+
+.row__meta-star {
+  color: var(--yamabuki);
+}
+
+.row__summary {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.75;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.row__cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.4375rem;
+}
+
+.tag {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.125rem 0.375rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  color: var(--ink-soft);
+}
+
+.tag:hover {
+  border-color: var(--ai);
+  color: var(--ai);
+}
+
+/* ── Pagination / empty state ─────────────────────────────────────────── */
+
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding-top: 1.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.pager a:hover {
+  color: var(--ai);
+  text-decoration: underline;
+}
+
+.pager__spacer {
+  visibility: hidden;
+}
+
+.empty {
+  padding: 3rem 0;
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+}
+
+.empty__hint {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--hakugun);
+  margin-top: 0.5rem;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.afterword {
+  padding-top: 1.75rem;
+  font-size: 0.8125rem;
+  color: var(--ink-soft);
+}
+
+.afterword a {
+  color: var(--ai);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Month archive ────────────────────────────────────────────────────── */
+/* Reuses the rail idea: each month's volume is a bar, so the shape of the
+ * collection over time is legible without a second kind of chart. */
+
+.months {
+  list-style: none;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.months__item {
+  border-top: 1px solid var(--rule);
+}
+
+.months__link {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr) 4rem;
+  gap: 0 1rem;
+  align-items: center;
+  padding: 0.75rem 0;
+}
+
+.months__link:hover .months__label {
+  color: var(--ai);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.months__label {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  letter-spacing: 0.04em;
+}
+
+.months__rail {
+  display: block;
+  height: 0.5rem;
+  border-left: 1px solid var(--rule-strong);
+}
+
+.months__bar {
+  display: block;
+  height: 100%;
+  background: var(--ai);
+  opacity: 0.85;
+}
+
+.months__count {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 40rem) {
+  .months__link {
+    grid-template-columns: 5.5rem minmax(0, 1fr) 3.5rem;
+  }
+}
+
+/* ── Narrow screens ───────────────────────────────────────────────────── */
+/* The rail is a comparative device; below ~40rem there isn't room for it to read as
+ * a chart, so it collapses and the score moves inline with the metadata. */
+
+@media (max-width: 40rem) {
+  .row {
+    grid-template-columns: var(--score-width) minmax(0, 1fr);
+    gap: 0 0.75rem;
+  }
+
+  .row__rail {
+    display: none;
+  }
+}

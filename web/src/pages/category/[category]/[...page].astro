@@ -1,0 +1,57 @@
+---
+import { getCollection } from "astro:content";
+import type { GetStaticPaths, Page } from "astro";
+import Feed from "../../../components/Feed.astro";
+import Pager from "../../../components/Pager.astro";
+import Base from "../../../layouts/Base.astro";
+import { type Article, byScore, FACET_LIMIT, PER_PAGE } from "../../../lib/articles";
+
+/** Top-scoring articles per category. Capped for the same reason as the source views,
+ *  and more urgently: articles carry ~3.9 categories each, so an uncapped listing
+ *  expanded 21,020 articles into 82,661 rows. */
+export const getStaticPaths = (async ({ paginate }) => {
+  const entries = await getCollection("articles");
+  const byCategory = new Map<string, Article[]>();
+  for (const entry of entries) {
+    for (const category of entry.data.category) {
+      const list = byCategory.get(category) ?? [];
+      list.push(entry.data);
+      byCategory.set(category, list);
+    }
+  }
+
+  return [...byCategory.entries()].flatMap(([category, articles]) =>
+    paginate(articles.sort(byScore).slice(0, FACET_LIMIT), {
+      params: { category },
+      pageSize: PER_PAGE,
+    })
+  );
+}) satisfies GetStaticPaths;
+
+interface Props {
+  page: Page<Article>;
+}
+
+const { category } = Astro.params;
+const { page } = Astro.props as Props;
+---
+
+<Base
+  title={`${category} · 藍 · AI News`}
+  total={page.total}
+  scope={`${category} — スコア上位 ${page.total} 件 · ${page.currentPage} / ${page.lastPage} ページ`}
+>
+  <nav class="pager" style="border-bottom:1px solid var(--rule);padding-bottom:1rem">
+    <a href="/">← 新着</a>
+    <a href="/archive/">月別アーカイブ →</a>
+  </nav>
+
+  <Feed articles={page.data} />
+
+  <Pager
+    prev={page.url.prev}
+    next={page.url.next}
+    current={page.currentPage}
+    last={page.lastPage}
+  />
+</Base>
