@@ -53,7 +53,11 @@ GitHub Actions で毎朝 09:00 JST (00:00 UTC) に実行される。
 │   │   ├── layouts/Base.astro
 │   │   ├── pages/               # 新着 / archive / source / category / search-index.json
 │   │   └── styles/global.css    # デザイントークン
-│   └── wrangler.jsonc       # Workers Static Assets (Worker スクリプトなし)
+│   ├── worker/              # アクセスゲート (共有シークレット)
+│   │   ├── auth.ts              # 判定ロジック (純粋関数)
+│   │   ├── index.ts             # エントリ。認可されたら env.ASSETS.fetch へ
+│   │   └── tsconfig.json        # workers-types。Astro の tsconfig からは除外
+│   └── wrangler.jsonc       # Workers Static Assets + main (ゲート)
 ├── .github/
 │   └── workflows/
 │       └── collect.yml      # GitHub Actions ワークフロー
@@ -78,8 +82,11 @@ npm run collect:dry        # ドライラン (外部 API 呼び出しなし)
 
 # 閲覧サイト (web/ は独立パッケージ)
 npm run export:web         # Notion → web/src/data/articles.json
-cd web && npm run dev      # ローカル起動 (localhost:4321)
+cd web && npm run use-fixture  # 認証情報なしで触る場合の代替データ
+cd web && npm run dev      # Astro 単体 (localhost:4321)。ゲートは通らない
 cd web && npm run build    # SSG ビルド → web/dist
+cd web && npm run check:worker && npm test  # ゲートの型チェックとテスト
+cd web && npx wrangler dev # ゲート込みで配信 (要 web/.dev.vars の SITE_TOKEN)
 cd web && npx wrangler deploy  # Cloudflare Workers へデプロイ
 
 # .env は npm script では読まれない (VS Code の launch.json のみ)。CLI から使う場合:
@@ -158,6 +165,28 @@ Notion → JSON スナップショット → Astro SSG の 3 段。Astro から 
   黙って欠落する（実測: DB に21,020件あるのに10,000件で打ち切られた）。
 - **検索対象はタイトル・ソース・カテゴリのみ**（要約は含めない）。90字の抜粋を入れるだけで
   インデックスが約370KB→約1.1MB (gzip) に膨らんだ。入力欄の placeholder にその旨を明記。
+
+### アクセスゲート (web/worker/)
+
+サイトは `*.workers.dev` で配信しており、**Cloudflare Access は自分が保有する zone の
+ホスト名にしか適用できない**ため、Access は使えない。代わりに Worker を前段に置き、
+共有シークレット (`SITE_TOKEN`) を HttpOnly Cookie で検証している。
+
+- `SITE_TOKEN` は **Worker のシークレット**（`wrangler secret put SITE_TOKEN`）。
+  GitHub Secrets ではない（CI は知る必要がない）し、`wrangler.jsonc` にも書かない。
+  `wrangler deploy` をしてもシークレットは保持される。
+- **フェイルクローズ。** `SITE_TOKEN` が未設定・24文字未満・Cookie に使えない文字を含む
+  場合は全リクエストを 404 にする。初回デプロイ時点では誰にも見えない状態から始まる。
+- `run_worker_first: true` が必須。これがないと静的アセットがエッジから直接返り、
+  `/_astro/*.css` などがゲートを通らずに漏れる。
+- 通す応答には `Cache-Control: private` を付ける。これがないと CDN や社内プロキシが
+  URL だけをキーにページを保持し、Cookie を持たないリクエストに渡しうる。
+- 初回は `/?k=<SITE_TOKEN>` で Cookie を発行し、**トークンを外した URL へリダイレクト**
+  する（履歴・`Referer`・アクセスログに残らないようにするため）。
+- これは ID 基盤ではない（個別ユーザー・監査ログ・部分失効なし）。ドメインを用意できる
+  なら Access に移行するほうが強い。`web/worker/auth.ts` 冒頭に判断を記録済み。
+- 判定ロジックは純粋関数として `auth.ts` に切り出し、37 ケースのユニットテストがある。
+  ここはアーカイブと公開インターネットの間に立つ唯一の防壁なので、CI でも独立に検査する。
 
 ---
 

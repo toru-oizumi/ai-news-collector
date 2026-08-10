@@ -1,5 +1,7 @@
 {
   "extends": "astro/tsconfigs/strict",
   "include": [".astro/types.d.ts", "**/*"],
-  "exclude": ["dist"]
+  // The Worker runs on a different global (workers-types, not DOM) and is type-checked
+  // by worker/tsconfig.json via `npm run check:worker`.
+  "exclude": ["dist", "worker"]
 }

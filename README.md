@@ -116,19 +116,44 @@ to 1000 requests/hour if you add many tags.
 
 ### 6. Cloudflare (optional)
 
-Needed only to publish the browsing site. Add two more secrets; without them the publish
+Needed only to publish the browsing site. Add two GitHub secrets; without them the publish
 job still builds the site (so a broken build fails loudly) but skips the deploy.
 
-- `CLOUDFLARE_API_TOKEN` — a token with **Workers Scripts: Edit**
-- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN` — **an API token, not an OAuth token.** `wrangler login` uses
+  OAuth interactively and cannot work in CI. Create the token at Cloudflare dashboard →
+  **My Profile → API Tokens → Create Token**, and under **Permission policies** open the
+  **Custom** dropdown and pick the **Edit Cloudflare Workers** template. Leave **client IP
+  filtering empty** — GitHub Actions runner IPs are dynamic, and restricting them breaks CI.
+- `CLOUDFLARE_ACCOUNT_ID` — from the dashboard URL (`dash.cloudflare.com/<id>/workers`) or
+  `npx wrangler whoami`.
 
-Then restrict access: Cloudflare dashboard → **Zero Trust → Access → Applications**, add a
-self-hosted application on the Worker's hostname and allow only your own email. This is
-dashboard configuration, not part of the repo.
+Then set the site's access token, once, directly on the Worker:
 
-> **Check this before trusting it.** Open the site in a logged-out browser and confirm you
-> get Cloudflare's login screen rather than the page. Until you do, you have no evidence
-> the site isn't public.
+```bash
+cd web
+npx wrangler secret put SITE_TOKEN     # paste a long random string, e.g. openssl rand -base64 24 | tr -d '/+='
+```
+
+`SITE_TOKEN` is a Worker secret, not a GitHub secret: CI never needs to see it, and it
+survives every `wrangler deploy`. Deploy order is safe either way — a Worker with no
+`SITE_TOKEN` serves 404 to everyone, so the site is closed from its very first deploy.
+
+To read the site, visit `https://<worker>.<subdomain>.workers.dev/?k=<SITE_TOKEN>` once.
+The Worker exchanges the token for a long-lived `HttpOnly; Secure` cookie and redirects to
+the same page without it, so the token stops appearing in history and `Referer` headers.
+
+> **Why not Cloudflare Access?** Access can only protect hostnames in a zone you own, and
+> this site is served from `*.workers.dev`. If you do have a domain on Cloudflare, prefer
+> Access: add `"routes": [{"pattern": "news.example.com", "custom_domain": true}]` and
+> `"workers_dev": false` to `web/wrangler.jsonc`, then create a self-hosted application at
+> **Zero Trust → Access controls → Applications**. See `web/worker/auth.ts` for what the
+> shared-secret approach gives up (no identity provider, no audit log, no per-user
+> revocation).
+>
+> **Check it before trusting it.** In a logged-out or private browser window, open the
+> site's root URL with no `?k=` and confirm you get a 404 — and do the same for an asset
+> path such as `/_astro/`. Until you have seen that, you have no evidence the archive
+> isn't public.
 
 ### 7. Local Setup
 
@@ -167,10 +192,23 @@ It is a separate npm package; the root package owns Notion access.
 ```bash
 npm run export:web              # Notion → web/src/data/articles.json (needs credentials)
 cd web && npm install
-npm run dev                     # http://localhost:4321
-npm run build && npx wrangler dev   # serve the build as Workers Static Assets
+npm run use-fixture             # or skip, if you ran export:web above
+npm run dev                     # http://localhost:4321 — no gate in the Astro dev server
+npm run check:worker && npm test # type-check and test the access gate
+npm run build && npx wrangler dev   # serve the build through the gate (see below)
 npx wrangler deploy             # first deploy, by hand
 ```
+
+To exercise the gate locally, put a token in `web/.dev.vars` (gitignored) before
+`wrangler dev`:
+
+```bash
+echo "SITE_TOKEN=$(openssl rand -base64 24 | tr -d '/+=')" > .dev.vars
+```
+
+Then `http://localhost:8787/` returns 404 and `http://localhost:8787/?k=<token>` lets you
+in. `npm run dev` (the Astro dev server) bypasses the Worker entirely, so use `wrangler
+dev` whenever you touch `worker/`.
 
 Layout:
 
@@ -182,6 +220,8 @@ Layout:
 | `/source/<name>/` | Top 200 from that source by score |
 | `/category/<name>/` | Top 200 in that category by score |
 | `/search-index.json` | Titles, sources and categories for the last 90 days |
+
+Everything above is behind the access gate in [`web/worker/`](web/worker/) — see step 6.
 
 Design notes worth knowing before changing it:
 

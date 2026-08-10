@@ -63,6 +63,16 @@ jobs:
         working-directory: web
         run: npm run check
 
+      # The gate in worker/ is the only thing between the archive and the public
+      # internet, so it is type-checked and tested separately from the site.
+      - name: Type check worker (tsc)
+        working-directory: web
+        run: npm run check:worker
+
+      - name: Test access gate (Vitest)
+        working-directory: web
+        run: npm test
+
       - name: Build
         working-directory: web
         run: npm run build
