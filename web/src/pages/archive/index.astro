@@ -1,0 +1,38 @@
+---
+import { getCollection } from "astro:content";
+import Base from "../../layouts/Base.astro";
+import { formatMonth, groupByMonth } from "../../lib/articles";
+
+const entries = await getCollection("articles");
+const articles = entries.map((e) => e.data);
+const months = groupByMonth(articles);
+
+// A bar per month, scaled to the busiest one — the same "make the numbers a shape"
+// idea as the score rail, so volume over time is readable without a separate chart.
+const busiest = Math.max(...[...months.values()].map((list) => list.length), 1);
+---
+
+<Base title="月別アーカイブ · 藍 · AI News" total={articles.length} scope="収集された月ごとの全記録">
+  <nav class="pager" style="border-bottom:1px solid var(--rule);padding-bottom:1rem">
+    <a href="/">← 新着</a>
+  </nav>
+
+  <ul class="months">
+    {
+      [...months.entries()].map(([month, list]) => (
+        <li class="months__item">
+          <a class="months__link" href={`/archive/${month}/`}>
+            <span class="months__label">{formatMonth(month)}</span>
+            <span class="months__rail" aria-hidden="true">
+              <span
+                class="months__bar"
+                style={`width:${Math.max(2, Math.round((list.length / busiest) * 100))}%`}
+              />
+            </span>
+            <span class="months__count">{list.length.toLocaleString("ja-JP")}</span>
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</Base>

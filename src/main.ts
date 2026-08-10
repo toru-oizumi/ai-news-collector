@@ -1,4 +1,4 @@
-import { MISTRAL_CONFIG, RSS_SOURCES, env } from "./config.js";
+import { JP_CONFIG, JP_RSS_SOURCES, MISTRAL_CONFIG, RSS_SOURCES, env } from "./config.js";
 import { getExistingUrls, getPageByUrl, pushOneToNotion, updateStatus } from "./notion/client.js";
 import { dedup } from "./pipeline/dedup.js";
 import { scoreAndFilter, selectDiverse } from "./pipeline/scorer.js";
@@ -10,6 +10,7 @@ import { githubTrendingFetcher } from "./sources/github-trending.js";
 import { hackerNewsFetcher } from "./sources/hackernews.js";
 import { huggingFaceFetcher } from "./sources/huggingface.js";
 import { lobstersFetcher } from "./sources/lobsters.js";
+import { qiitaFetcher } from "./sources/qiita.js";
 import { createRSSFetcher } from "./sources/rss-fetcher.js";
 import type { Article, Fetcher } from "./types.js";
 
@@ -53,6 +54,23 @@ async function syncSlackReactions(): Promise<void> {
   }
 }
 
+/**
+ * Pick the articles to process this run, budgeting Japanese and non-Japanese separately.
+ *
+ * Japanese articles skip the summarizer (see the processing loop), so they don't compete
+ * for Mistral's per-run budget and get their own quota instead. Both halves go through
+ * selectDiverse so one high-volume source can't fill every slot within its half.
+ */
+function selectForProcessing(articles: Article[]): Article[] {
+  const japanese = articles.filter((a) => a.lang === "ja");
+  const rest = articles.filter((a) => a.lang !== "ja");
+
+  return [
+    ...selectDiverse(rest, MISTRAL_CONFIG.maxSummarize),
+    ...selectDiverse(japanese, JP_CONFIG.maxPerRun),
+  ].sort((a, b) => b.score - a.score);
+}
+
 async function main() {
   const startTime = Date.now();
   console.log("=== AI News Collector ===");
@@ -68,11 +86,13 @@ async function main() {
 
   const fetchers: Fetcher[] = [
     ...RSS_SOURCES.map(createRSSFetcher),
+    ...JP_RSS_SOURCES.map(createRSSFetcher),
     anthropicFetcher,
     hackerNewsFetcher,
     huggingFaceFetcher,
     lobstersFetcher,
     githubTrendingFetcher,
+    qiitaFetcher,
   ];
 
   const fetchResults = await Promise.allSettled(
@@ -123,8 +143,7 @@ async function main() {
   }
 
   // ── Step 5: Process article by article (summarize → push) ──
-  // Cap per-source representation so one high-volume source can't fill every slot.
-  const toProcess = selectDiverse(articles, MISTRAL_CONFIG.maxSummarize);
+  const toProcess = selectForProcessing(articles);
 
   if (env.DRY_RUN) {
     console.log("\n[5/5] Skipping Mistral summarization (dry-run)");
@@ -134,14 +153,23 @@ async function main() {
       console.log(`\n[${a.source}] (score: ${a.score}${crowd}) ${a.title}`);
       console.log(`  URL: ${a.url}`);
       console.log(`  Categories: ${a.category.join(", ")}`);
+      console.log(
+        `  Lang/Kind: ${a.lang ?? "?"}/${a.kind ?? "?"}` +
+          `  Published: ${a.publishedAt?.toISOString() ?? "unknown"}`
+      );
     }
     if (toProcess.length > 20) {
       console.log(`\n... and ${toProcess.length - 20} more`);
     }
   } else if (env.NOTION_API_KEY && env.NOTION_DATABASE_ID) {
-    console.log(`\n[5/5] Processing ${toProcess.length} articles (summarize → push)...`);
+    const jaCount = toProcess.filter((a) => a.lang === "ja").length;
+    console.log(
+      `\n[5/5] Processing ${toProcess.length} articles (summarize → push)` +
+        ` — ${toProcess.length - jaCount} to summarize, ${jaCount} Japanese (excerpt only)...`
+    );
     let skipped = 0;
     let totalTokens = 0;
+    let summarizedCount = 0;
     // Successfully-pushed articles, in score order, for the Slack digest.
     const pushed: Article[] = [];
 
@@ -149,8 +177,14 @@ async function main() {
       const article = toProcess[i];
       const tag = `[${i + 1}/${toProcess.length}]`;
 
-      const tokens = await summarizeOne(article);
-      totalTokens += tokens;
+      if (article.lang === "ja") {
+        // Already in the target language — a Japanese-to-Japanese round trip would
+        // burn a 31s rate-limit slot to produce roughly what the feed already gave us.
+        article.summary = article.abstract.slice(0, 300);
+      } else {
+        totalTokens += await summarizeOne(article);
+        summarizedCount++;
+      }
 
       const notionUrl = await pushOneToNotion(article);
       const ok = notionUrl !== null;
@@ -166,9 +200,12 @@ async function main() {
     }
 
     console.log(`\n  Created: ${pushed.length}, Skipped: ${skipped}`);
-    const avgTokens = toProcess.length > 0 ? Math.round(totalTokens / toProcess.length) : 0;
+    // Averaged over summarized articles only — Japanese ones cost no tokens and
+    // would otherwise drag the per-article figure down.
+    const avgTokens = summarizedCount > 0 ? Math.round(totalTokens / summarizedCount) : 0;
     console.log(
-      `[Summarizer] Total tokens: ${totalTokens.toLocaleString()} (avg: ${avgTokens}/article)`
+      `[Summarizer] Total tokens: ${totalTokens.toLocaleString()}` +
+        ` (avg: ${avgTokens}/article over ${summarizedCount} summarized)`
     );
 
     // ── Step 6: Post a digest to Slack (optional, best-effort) ──

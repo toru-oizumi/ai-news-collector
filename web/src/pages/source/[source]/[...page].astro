@@ -1,0 +1,54 @@
+---
+import { getCollection } from "astro:content";
+import type { GetStaticPaths, Page } from "astro";
+import Feed from "../../../components/Feed.astro";
+import Pager from "../../../components/Pager.astro";
+import Base from "../../../layouts/Base.astro";
+import { type Article, byScore, FACET_LIMIT, PER_PAGE } from "../../../lib/articles";
+
+/** Top-scoring articles per source — a "best of this source" view, not an archive.
+ *  Use the month archive to read a source's full history in order. */
+export const getStaticPaths = (async ({ paginate }) => {
+  const entries = await getCollection("articles");
+  const bySource = new Map<string, Article[]>();
+  for (const entry of entries) {
+    const list = bySource.get(entry.data.source) ?? [];
+    list.push(entry.data);
+    bySource.set(entry.data.source, list);
+  }
+
+  return [...bySource.entries()].flatMap(([source, articles]) =>
+    paginate(articles.sort(byScore).slice(0, FACET_LIMIT), {
+      params: { source },
+      pageSize: PER_PAGE,
+    })
+  );
+}) satisfies GetStaticPaths;
+
+interface Props {
+  page: Page<Article>;
+}
+
+const { source } = Astro.params;
+const { page } = Astro.props as Props;
+---
+
+<Base
+  title={`${source} · 藍 · AI News`}
+  total={page.total}
+  scope={`${source} — スコア上位 ${page.total} 件 · ${page.currentPage} / ${page.lastPage} ページ`}
+>
+  <nav class="pager" style="border-bottom:1px solid var(--rule);padding-bottom:1rem">
+    <a href="/">← 新着</a>
+    <a href="/archive/">月別アーカイブ →</a>
+  </nav>
+
+  <Feed articles={page.data} />
+
+  <Pager
+    prev={page.url.prev}
+    next={page.url.next}
+    current={page.currentPage}
+    last={page.lastPage}
+  />
+</Base>

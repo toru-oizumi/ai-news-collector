@@ -35,3 +35,44 @@ jobs:
 
       - name: Test (Vitest)
         run: npm run test:run
+
+  # The site is a separate package with its own toolchain. Built against the committed
+  # fixture so it is checked on every push — without this, a broken template would only
+  # surface during a publish run, hours later and with no PR to attach it to.
+  site:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Provide fixture data
+        working-directory: web
+        run: npm run use-fixture
+
+      - name: Type check (astro check)
+        working-directory: web
+        run: npm run check
+
+      # The gate in worker/ is the only thing between the archive and the public
+      # internet, so it is type-checked and tested separately from the site.
+      - name: Type check worker (tsc)
+        working-directory: web
+        run: npm run check:worker
+
+      - name: Test access gate (Vitest)
+        working-directory: web
+        run: npm test
+
+      - name: Build
+        working-directory: web
+        run: npm run build

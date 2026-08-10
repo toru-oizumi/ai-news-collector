@@ -1,4 +1,5 @@
 import { AI_KEYWORDS, LOBSTERS_CONFIG } from "../config.js";
+import { matchesKeyword } from "../pipeline/keywords.js";
 import type { Article, Fetcher } from "../types.js";
 
 /** A story from lobste.rs `hottest.json`. Only the fields we use are typed. */
@@ -23,10 +24,7 @@ export function isAiStory(story: LobstersStory): boolean {
   if (tags.some((t) => LOBSTERS_CONFIG.aiTags.includes(t.toLowerCase()))) {
     return true;
   }
-  const text = ` ${`${story.title} ${story.description_plain ?? ""}`.toLowerCase()} `;
-  return AI_KEYWORDS.some((kw) =>
-    kw.length <= 3 ? new RegExp(`\\b${kw}\\b`).test(text) : text.includes(kw)
-  );
+  return matchesKeyword(`${story.title} ${story.description_plain ?? ""}`, AI_KEYWORDS);
 }
 
 /** Map a raw Lobsters story to a normalized Article (crowd score = vote count). */

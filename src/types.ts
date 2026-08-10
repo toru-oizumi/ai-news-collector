@@ -15,6 +15,24 @@ export interface Article {
   /** URL of the Notion page created for this article. Set after a successful push;
    *  used to link the Slack digest back to the Notion entry. */
   notionUrl?: string;
+  /** Content language. Assigned by the scorer from SOURCE_META — fetchers leave it unset.
+   *  Japanese articles skip Mistral summarization (they are already in the target language). */
+  lang?: Lang;
+  /** Information tier. Assigned by the scorer from SOURCE_META — fetchers leave it unset.
+   *  "primary" = lab/vendor announcements and papers, "secondary" = commentary and tutorials. */
+  kind?: Kind;
+}
+
+/** Content language of a source. */
+export type Lang = "en" | "ja";
+
+/** Information tier of a source: original announcement vs. commentary about one. */
+export type Kind = "primary" | "secondary";
+
+/** Language / tier classification for a source. Declared once per source in SOURCE_META. */
+export interface SourceMeta {
+  lang: Lang;
+  kind: Kind;
 }
 
 export type Source =
@@ -44,7 +62,11 @@ export type Source =
   | "Latent Space"
   | "Import AI"
   | "Changelog"
-  | "smol.ai";
+  | "smol.ai"
+  // Japanese-language practitioner sources (Phase A)
+  | "Hatena"
+  | "Qiita"
+  | "Zenn";
 
 export type Category =
   | "LLM"
@@ -77,4 +99,10 @@ export interface RSSSourceConfig {
    *  Useful for feeds that expose a long backlog (e.g. smol.ai ships 600+ items).
    *  Items with no publish date are kept (age cannot be determined). */
   maxAgeDays?: number;
+  /** Optional RSS extension element to read as the item's crowd signal, e.g.
+   *  "hatena:bookmarkcount". Parsed as a number into Article.crowdScore. */
+  crowdField?: string;
+  /** Optional crowd-signal floor — drop items whose crowdField value is below this.
+   *  Only meaningful together with `crowdField`; items missing the field are dropped. */
+  minCrowd?: number;
 }

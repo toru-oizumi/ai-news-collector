@@ -1,4 +1,4 @@
-import { SCORE_CONFIG } from "../config.js";
+import { SCORE_CONFIG, SOURCE_META } from "../config.js";
 import type { Article, Category } from "../types.js";
 
 /**
@@ -15,6 +15,15 @@ export function scoreAndFilter(articles: Article[]): Article[] {
 
     // Auto-categorize
     article.category = categorize(article);
+
+    // Stamp language / information tier from the central classification table so
+    // fetchers don't each have to know it. Downstream this decides whether an article
+    // goes through the summarizer and how it is grouped in Notion and on the site.
+    const meta = SOURCE_META[article.source];
+    if (meta) {
+      article.lang = meta.lang;
+      article.kind = meta.kind;
+    }
   }
 
   return articles.filter((a) => a.score >= SCORE_CONFIG.minScore).sort((a, b) => b.score - a.score);

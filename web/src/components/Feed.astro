@@ -1,0 +1,69 @@
+---
+import type { Article } from "../lib/articles";
+import { collectedOn, dateOf } from "../lib/articles";
+import ArticleRow from "./ArticleRow.astro";
+
+interface Props {
+  articles: Article[];
+  /** Set on the front page so the toolbar can hide this list while filtering. */
+  id?: string;
+  /**
+   * Group rows under the date they were collected. On date-ordered listings this is
+   * what makes the order legible: rows show their *publish* date, which for aggregator
+   * sources can be years old, so without the header the sequence looks arbitrary.
+   * Off for the score-ranked facet views, where date is not the sort key.
+   */
+  groupByDate?: boolean;
+}
+
+const { articles, id, groupByDate = false } = Astro.props;
+
+/** [collection date, rows, index of the first row] — the running index keeps the
+ *  bar-draw stagger continuous across groups. */
+const groups: [string, Article[], number][] = [];
+if (groupByDate) {
+  let offset = 0;
+  for (const article of articles) {
+    const date = collectedOn(article);
+    const last = groups.at(-1);
+    if (last && last[0] === date) {
+      last[1].push(article);
+    } else {
+      groups.push([date, [article], offset]);
+    }
+    offset++;
+  }
+} else {
+  groups.push(["", articles, 0]);
+}
+---
+
+<div class="feed" id={id}>
+  {
+    groups.map(([date, rows, offset]) => (
+      <>
+        {groupByDate && date && (
+          <h2 class="feed__day">
+            <span class="feed__day-date">{date}</span>
+            <span class="feed__day-count">{rows.length} 件</span>
+          </h2>
+        )}
+        {rows.map((article, i) => (
+          <ArticleRow
+            title={article.title}
+            url={article.url}
+            source={article.source}
+            category={article.category}
+            score={article.score}
+            summary={article.summary}
+            date={dateOf(article)}
+            status={article.status}
+            lang={article.lang}
+            notionUrl={article.notionUrl}
+            index={offset + i}
+          />
+        ))}
+      </>
+    ))
+  }
+</div>

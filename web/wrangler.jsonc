@@ -1,0 +1,21 @@
+{
+  // The site is gated by worker/index.ts rather than by Cloudflare Access: Access can
+  // only protect hostnames in a zone you own, and this Worker is served from
+  // *.workers.dev. See worker/auth.ts for what that trade-off costs.
+  //
+  // The shared secret is NOT configured here — this file is committed. Set it once with:
+  //   npx wrangler secret put SITE_TOKEN
+  "name": "ai-news-web",
+  "compatibility_date": "2026-08-01",
+  "main": "./worker/index.ts",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    // Without this, static assets would be served straight from the edge and the gate
+    // would never run for the pages it is meant to protect.
+    "run_worker_first": true,
+    // Astro emits directory-style routes with an index.html per page.
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

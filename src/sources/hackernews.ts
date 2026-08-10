@@ -1,4 +1,5 @@
 import { HN_CONFIG } from "../config.js";
+import { matchesKeyword } from "../pipeline/keywords.js";
 import type { Article, Fetcher } from "../types.js";
 
 interface HNHit {
@@ -50,11 +51,7 @@ export const hackerNewsFetcher: Fetcher = {
           if (hit.points < HN_CONFIG.minScore) continue;
 
           // Title must contain at least one AI-related keyword (word-boundary aware)
-          const titleLower = ` ${hit.title.toLowerCase()} `;
-          const isAiRelated = HN_CONFIG.titleKeywords.some((kw) =>
-            kw.length <= 3 ? new RegExp(`\\b${kw}\\b`).test(titleLower) : titleLower.includes(kw)
-          );
-          if (!isAiRelated) continue;
+          if (!matchesKeyword(hit.title, HN_CONFIG.titleKeywords)) continue;
 
           seen.add(hit.url);
 
