@@ -159,13 +159,15 @@ Edit `CATEGORY_RULES` in `src/pipeline/scorer.ts`.
 
 All within free tiers:
 
-| Service | Free Tier | Job 1 usage | Job 2 usage |
-|---|---|---|---|
-| GitHub Actions | 2,000 min/month (private) | ~150 min/month | ~180 min/month |
-| Mistral API | 1B tokens/month, 2 RPM | ~1.2M tokens/month | ~16M tokens/month |
-| Notion API | Free plan | — | — |
+| Service | Free Tier | Notes |
+|---|---|---|
+| GitHub Actions | Unlimited for public repos | collect ~28 min + digest (rate-limited) run 4×/day |
+| Mistral API | 1B tokens/month, 2 RPM | well under the free tier at the current volume |
+| Notion API | Free plan | — |
 
-**Total Mistral: ~17M tokens/month ≈ 1.7% of the 1B free tier.**
+Actions minutes are free because this repo is **public** (private repos get 2,000 min/month,
+which the 4×/day cadence would exceed). The 2 RPM Mistral limit is the real pacing constraint:
+the digest job processes ~30 articles/run at ~62s each (digest + full translation).
 
 ## License
 
