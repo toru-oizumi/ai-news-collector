@@ -4,17 +4,33 @@ import type { Article } from "../types.js";
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000]; // 3 retries with backoff
 
+/**
+ * Whether an error is worth retrying: rate limits (429), server errors (5xx), and
+ * transport/network failures. The latter covers the intermittent node-fetch
+ * "Premature close" drops against api.notion.com that were failing whole runs (TOR-71) —
+ * those surface as plain (non-APIResponseError) errors, so retry anything that isn't a
+ * definitive 4xx from the API.
+ */
+function isRetryable(err: unknown): boolean {
+  if (err instanceof APIResponseError) return err.status === 429 || err.status >= 500;
+  return true;
+}
+
 async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      const isRateLimit = err instanceof APIResponseError && err.status === 429;
       const hasRetry = attempt < RETRY_DELAYS_MS.length;
-
-      if (isRateLimit && hasRetry) {
+      if (hasRetry && isRetryable(err)) {
         const delay = RETRY_DELAYS_MS[attempt];
-        console.warn(`[Notion] Rate limited on "${label}" — retrying in ${delay / 1000}s...`);
+        const reason =
+          err instanceof APIResponseError
+            ? `HTTP ${err.status}`
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        console.warn(`[Notion] "${label}" failed (${reason}) — retrying in ${delay / 1000}s...`);
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
@@ -25,11 +41,21 @@ async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
   throw new Error("withRetry: exhausted retries");
 }
 
+// The @notionhq/client defaults to node-fetch@2, whose keep-alive sockets
+// intermittently fail against api.notion.com with "Premature close" on Node 24.
+// Inject the platform's native fetch (undici) instead — the same transport the
+// Mistral/Slack calls use without issue. Type is derived from the constructor so
+// we don't depend on the (unexported) ClientOptions type. See TOR-71.
+type NotionFetch = NonNullable<NonNullable<ConstructorParameters<typeof Client>[0]>["fetch"]>;
+
 let notion: Client;
 
 function getClient(): Client {
   if (!notion) {
-    notion = new Client({ auth: env.NOTION_API_KEY });
+    notion = new Client({
+      auth: env.NOTION_API_KEY,
+      fetch: fetch as unknown as NotionFetch,
+    });
   }
   return notion;
 }
