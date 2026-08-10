@@ -38,8 +38,22 @@ async function queryUnreadArticles(notion: Client): Promise<ArticleRow[]> {
       notion.databases.query({
         database_id: env.NOTION_DATABASE_ID,
         filter: {
-          property: "Status",
-          select: { equals: "Unread" },
+          and: [
+            { property: "Status", select: { equals: "Unread" } },
+            // Japanese articles are already in the target language and were pushed with
+            // an excerpt instead of a Mistral summary. Running them through digest +
+            // translate would be a Japanese-to-Japanese round trip, so skip them here.
+            // The explicit is_empty arm keeps rows predating Phase A (no Lang set) in
+            // scope rather than relying on how does_not_equal treats empty selects.
+            // NOTE: requires a `Lang` select property on the database — Notion rejects
+            // filters on properties that don't exist.
+            {
+              or: [
+                { property: "Lang", select: { does_not_equal: "ja" } },
+                { property: "Lang", select: { is_empty: true } },
+              ],
+            },
+          ],
         },
         sorts: [{ property: "Score", direction: "descending" }],
         page_size: 30,

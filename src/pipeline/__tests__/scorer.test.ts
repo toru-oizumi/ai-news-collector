@@ -137,3 +137,82 @@ describe("selectDiverse", () => {
     expect(result.map((a) => a.score)).toEqual([130, 120, 99]);
   });
 });
+
+describe("scoreAndFilter — language and tier stamping", () => {
+  it("stamps lang and kind from SOURCE_META", () => {
+    const result = scoreAndFilter([
+      makeArticle({ source: "OpenAI" }),
+      makeArticle({ source: "Qiita", url: "https://qiita.com/a", crowdScore: 50 }),
+    ]);
+    const openai = result.find((a) => a.source === "OpenAI");
+    const qiita = result.find((a) => a.source === "Qiita");
+
+    expect(openai?.lang).toBe("en");
+    expect(openai?.kind).toBe("primary");
+    expect(qiita?.lang).toBe("ja");
+    expect(qiita?.kind).toBe("secondary");
+  });
+
+  it("classifies aggregators as secondary even though they are English", () => {
+    const result = scoreAndFilter([makeArticle({ source: "Hacker News", crowdScore: 200 })]);
+    expect(result[0].lang).toBe("en");
+    expect(result[0].kind).toBe("secondary");
+  });
+
+  it("marks all three Japanese sources as ja/secondary", () => {
+    const result = scoreAndFilter([
+      makeArticle({ source: "Hatena", url: "https://a.example", crowdScore: 100 }),
+      makeArticle({ source: "Qiita", url: "https://b.example", crowdScore: 100 }),
+      // Zenn carries no crowd signal, so it relies on base weight clearing minScore.
+      makeArticle({ source: "Zenn", url: "https://c.example" }),
+    ]);
+    expect(result).toHaveLength(3);
+    for (const article of result) {
+      expect(article.lang).toBe("ja");
+      expect(article.kind).toBe("secondary");
+    }
+  });
+});
+
+describe("scoreAndFilter — Japanese sources do not swamp primary sources", () => {
+  it("keeps a heavily bookmarked Hatena entry below a keyword-rich OpenAI post", () => {
+    // The balance Phase A has to hold: crowd signal should let a popular Japanese
+    // article compete, without letting it outrank a first-party announcement.
+    const [hatena] = scoreAndFilter([
+      makeArticle({ source: "Hatena", title: "生成AIの話", crowdScore: 300 }),
+    ]);
+    const [openai] = scoreAndFilter([
+      makeArticle({ source: "OpenAI", title: "Introducing a new Claude-class agent model" }),
+    ]);
+    expect(hatena.score).toBeLessThan(openai.score);
+  });
+
+  it("lets a well-bookmarked Hatena entry outrank a mid-tier arXiv paper", () => {
+    // arXiv sits at base 25 deliberately (Phase 1 de-emphasized academic volume), so a
+    // widely-read Japanese write-up should be able to place above an ordinary paper.
+    const [hatena] = scoreAndFilter([
+      makeArticle({ source: "Hatena", title: "生成AIの検証記事", crowdScore: 200 }),
+    ]);
+    const [arxiv] = scoreAndFilter([
+      makeArticle({ source: "arXiv", title: "Retrieval for long-context models" }),
+    ]);
+    expect(hatena.score).toBeGreaterThan(arxiv.score);
+  });
+
+  it("gives Japanese articles bonus keywords so they can differentiate", () => {
+    // Without Japanese entries in keywordBonus, every Japanese article would score
+    // base + crowd only, flattening hands-on write-ups against throwaway posts.
+    const [plain] = scoreAndFilter([makeArticle({ source: "Zenn", title: "日々の記録" })]);
+    const [handsOn] = scoreAndFilter([
+      makeArticle({ source: "Zenn", url: "https://b.example", title: "MCPエージェントの実装" }),
+    ]);
+    expect(handsOn.score).toBeGreaterThan(plain.score);
+  });
+
+  it("keeps a Zenn article above minScore on base weight alone", () => {
+    // Regression: at base 25 (below minScore 30) every crowd-signal-free Zenn item was
+    // filtered out, making the source contribute nothing.
+    const result = scoreAndFilter([makeArticle({ source: "Zenn", title: "日々の記録" })]);
+    expect(result).toHaveLength(1);
+  });
+});

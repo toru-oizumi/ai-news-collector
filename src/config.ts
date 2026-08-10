@@ -1,4 +1,4 @@
-import type { RSSSourceConfig, Source } from "./types.js";
+import type { RSSSourceConfig, Source, SourceMeta } from "./types.js";
 
 // ── Environment variables ──
 export const env = {
@@ -8,6 +8,9 @@ export const env = {
   // Optional Slack delivery — when both are set, a digest is posted after the run.
   SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
   SLACK_CHANNEL_ID: process.env.SLACK_CHANNEL_ID ?? "",
+  // Optional Qiita token — raises the API v2 rate limit from 60 to 1000 requests/hour.
+  // The collector stays well under 60, so this is a safety margin, not a requirement.
+  QIITA_TOKEN: process.env.QIITA_TOKEN ?? "",
   DRY_RUN: process.argv.includes("--dry-run"),
 } as const;
 
@@ -45,6 +48,45 @@ export const AI_KEYWORDS = [
   "copilot",
   "prompt",
   "rag",
+];
+
+// ── Japanese AI/ML keyword list (Phase A) ──
+// Used to filter Japanese-language sources whose feeds carry general tech news.
+// Matching lowercases both sides, so "生成AI" written here also matches "生成ai";
+// Japanese has no case distinction, so no special normalization is needed.
+// Short English terms are safe here because the \b word-boundary check in the
+// shared matcher treats Japanese characters as non-word characters.
+export const AI_KEYWORDS_JA = [
+  "生成ai",
+  "大規模言語モデル",
+  "言語モデル",
+  "機械学習",
+  "深層学習",
+  "ディープラーニング",
+  "ニューラル",
+  "拡散モデル",
+  "画像生成",
+  "動画生成",
+  "音声認識",
+  "マルチモーダル",
+  "強化学習",
+  "ファインチューニング",
+  "埋め込み",
+  "ベクトル検索",
+  "エージェント",
+  "プロンプト",
+  "推論",
+  // Terms that stay in Latin script even inside Japanese prose.
+  "llm",
+  "rag",
+  "mcp",
+  "claude",
+  "gpt",
+  "gemini",
+  "transformer",
+  "copilot",
+  "openai",
+  "anthropic",
 ];
 
 // ── RSS Sources (Tier 1 + Tier 2) ──
@@ -132,6 +174,69 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
   // replacing the unofficial gh-pages RSS generator. See GITHUB_TRENDING_CONFIG below.
 ];
 
+// ── Japanese sources (Phase A) ──
+// Hatena Bookmark search feeds. /search/tag and /search/text both 301 to /q/, so we
+// point at the redirect target directly (rss-parser follows one redirect by default,
+// but relying on that is an unnecessary dependency). Feeds are RSS 1.0 (RDF): items
+// expose bookmark counts via the hatena:bookmarkcount extension element and carry
+// dc:date rather than pubDate.
+export const HATENA_QUERIES = ["生成AI", "LLM", "Claude Code", "機械学習"];
+
+/** Minimum bookmarks for a Hatena entry. Tag search is human-curated but still lets
+ *  unrelated entries through, so the bookmark floor is the second filter after keywords. */
+export const HATENA_MIN_BOOKMARKS = 10;
+
+// Zenn topic feeds. Verified reachable: ai, llm, 生成ai, claudecode, machinelearning,
+// nlp, chatgpt. These carry no like count — the unofficial /api/articles?order=daily
+// endpoint exposes liked_count but is undocumented, so it is deliberately not used.
+export const ZENN_TOPICS = ["llm", "生成ai", "claudecode", "ai"];
+
+export const JP_RSS_SOURCES: RSSSourceConfig[] = [
+  ...HATENA_QUERIES.map(
+    (query): RSSSourceConfig => ({
+      name: "Hatena",
+      url: `https://b.hatena.ne.jp/q/${encodeURIComponent(query)}?sort=recent&mode=rss`,
+      keywords: AI_KEYWORDS_JA,
+      crowdField: "hatena:bookmarkcount",
+      minCrowd: HATENA_MIN_BOOKMARKS,
+      maxAgeDays: 7,
+    })
+  ),
+  ...ZENN_TOPICS.map(
+    (topic): RSSSourceConfig => ({
+      name: "Zenn",
+      url: `https://zenn.dev/topics/${encodeURIComponent(topic)}/feed`,
+      maxAgeDays: 7,
+    })
+  ),
+];
+
+// ── Qiita (official API v2) ──
+export const QIITA_CONFIG = {
+  apiUrl: "https://qiita.com/api/v2/items",
+  /** Tag queries. One request each, so keep the list short — the unauthenticated
+   *  limit is 60 requests/hour (1000/hour with QIITA_TOKEN set).
+   *  Tags were picked by measured yield within the freshness + LGTM filters:
+   *  AIエージェント/生成AI/ClaudeCode/LLM/Gemini all produce hits, whereas
+   *  MachineLearning and 自然言語処理 yielded zero (low traffic, stale backlog). */
+  tags: ["AIエージェント", "生成AI", "ClaudeCode", "LLM", "Gemini"],
+  /** 100 is the API maximum. The busy tags publish so fast that per_page=20 only
+   *  reaches back a day or two — and posts that new have no LGTMs yet, so the
+   *  minLikes floor rejected nearly everything. A wider window fixes that. */
+  perPage: 100,
+  /** Minimum LGTM count. Qiita has a long tail of near-zero-engagement posts. */
+  minLikes: 3,
+  /** Max articles kept across all tag queries (after dedup). */
+  maxItems: 20,
+  maxAgeDays: 7,
+};
+
+/** How many Japanese articles to push per run. They skip Mistral summarization, so this
+ *  is independent of MISTRAL_CONFIG.maxSummarize and does not affect the token budget. */
+export const JP_CONFIG = {
+  maxPerRun: 15,
+};
+
 // ── GitHub Trending (official site scrape — Phase 2, replaces unofficial gh-pages RSS) ──
 export const GITHUB_TRENDING_CONFIG = {
   baseUrl: "https://github.com/trending",
@@ -178,6 +283,47 @@ export const LOBSTERS_CONFIG = {
 // ── HuggingFace Daily Papers ──
 export const HF_PAPERS_URL = "https://huggingface.co/api/daily_papers";
 
+// ── Source classification (Phase A) ──
+// Language and information tier per source, applied centrally by the scorer so fetchers
+// stay unchanged. `satisfies Record<Source, SourceMeta>` makes a missing entry a compile
+// error the moment a new Source is added — same guarantee as sourceWeights below.
+//
+// "primary"   = the lab / vendor / author publishing their own work (announcements, papers)
+// "secondary" = someone writing about a primary source (commentary, tutorials, aggregation)
+export const SOURCE_META = {
+  OpenAI: { lang: "en", kind: "primary" },
+  Anthropic: { lang: "en", kind: "primary" },
+  DeepMind: { lang: "en", kind: "primary" },
+  "Google AI": { lang: "en", kind: "primary" },
+  "Meta AI": { lang: "en", kind: "primary" },
+  NVIDIA: { lang: "en", kind: "primary" },
+  arXiv: { lang: "en", kind: "primary" },
+  HuggingFace: { lang: "en", kind: "primary" },
+  Mistral: { lang: "en", kind: "primary" },
+  xAI: { lang: "en", kind: "primary" },
+  "AWS ML": { lang: "en", kind: "primary" },
+  Ollama: { lang: "en", kind: "primary" },
+  Qwen: { lang: "en", kind: "primary" },
+  "Claude Code": { lang: "en", kind: "primary" },
+  Cursor: { lang: "en", kind: "primary" },
+  Windsurf: { lang: "en", kind: "primary" },
+  "GitHub Blog": { lang: "en", kind: "primary" },
+  LangChain: { lang: "en", kind: "primary" },
+  Vercel: { lang: "en", kind: "primary" },
+  // Aggregators and commentary — these point at primary sources rather than being one.
+  "Hacker News": { lang: "en", kind: "secondary" },
+  Lobsters: { lang: "en", kind: "secondary" },
+  "GitHub Trending": { lang: "en", kind: "secondary" },
+  "Simon Willison": { lang: "en", kind: "secondary" },
+  "Latent Space": { lang: "en", kind: "secondary" },
+  "Import AI": { lang: "en", kind: "secondary" },
+  Changelog: { lang: "en", kind: "secondary" },
+  "smol.ai": { lang: "en", kind: "secondary" },
+  Hatena: { lang: "ja", kind: "secondary" },
+  Qiita: { lang: "ja", kind: "secondary" },
+  Zenn: { lang: "ja", kind: "secondary" },
+} satisfies Record<Source, SourceMeta>;
+
 // ── Scoring weights ──
 export const SCORE_CONFIG = {
   /** Base score per source */
@@ -213,20 +359,53 @@ export const SCORE_CONFIG = {
     Changelog: 50,
     // Curated AI-Twitter/Discord recap (TOR-47) — practitioner-tier signal.
     "smol.ai": 60,
+    // Japanese secondary sources (Phase A). Deliberately low: these are commentary on
+    // primary announcements, so the crowd bonus — not the base weight — should decide
+    // whether one outranks an arXiv paper or a vendor release note.
+    Hatena: 25,
+    Qiita: 20,
+    // Zenn sits above minScore (30) on purpose: its topic feeds carry no crowd signal,
+    // so base weight is the only score a Zenn article gets unless a bonus keyword hits.
+    // At 25 every Zenn item would be filtered out and the source would be dead weight.
+    // The topic feed itself is the relevance filter — an article in /topics/llm is on-topic.
+    Zenn: 35,
   } satisfies Record<Source, number>,
 
-  /** Bonus keywords (additive) */
+  /** Bonus keywords (additive).
+   *  Japanese equivalents are folded into the same rules as their English counterparts:
+   *  without them, Japanese articles would collect no bonuses at all and rank purely on
+   *  base weight plus crowd signal, leaving no way to tell a deep write-up from a tweet. */
   keywordBonus: [
     { keywords: ["gpt-5", "gpt-6", "claude", "gemini", "llama"], bonus: 20 },
-    { keywords: ["agent", "agentic", "tool use", "function calling", "mcp"], bonus: 15 },
-    { keywords: ["open source", "open-source", "weights released"], bonus: 15 },
+    {
+      keywords: ["agent", "agentic", "tool use", "function calling", "mcp", "エージェント"],
+      bonus: 15,
+    },
+    {
+      keywords: ["open source", "open-source", "weights released", "オープンソース", "重み公開"],
+      bonus: 15,
+    },
     // Practitioner / dev-tooling signal (Phase 1) — lifts hands-on content.
     {
-      keywords: ["dev tool", "developer", "productivity", "observability", "workers", "d1", "r2"],
+      keywords: [
+        "dev tool",
+        "developer",
+        "productivity",
+        "observability",
+        "workers",
+        "d1",
+        "r2",
+        "実装",
+        "検証",
+        "試し",
+        "入門",
+        "解説",
+        "開発",
+      ],
       bonus: 12,
     },
-    { keywords: ["rag", "retrieval"], bonus: 10 },
-    { keywords: ["safety", "alignment", "red team"], bonus: 10 },
+    { keywords: ["rag", "retrieval", "検索拡張"], bonus: 10 },
+    { keywords: ["safety", "alignment", "red team", "アライメント", "脆弱性"], bonus: 10 },
     // De-emphasize pure benchmark/SOTA framing (Phase 1: was +10, now neutral-ish).
     { keywords: ["benchmark", "sota", "state-of-the-art"], bonus: 5 },
   ],
@@ -243,6 +422,10 @@ export const SCORE_CONFIG = {
       "Hacker News": 1,
       Lobsters: 5,
       "GitHub Trending": 0.5,
+      // Hatena bookmark counts run a little below HN points for comparable reach;
+      // Qiita LGTMs are smaller again, so both are scaled up before the log.
+      Hatena: 1.5,
+      Qiita: 4,
     } as Partial<Record<Source, number>>,
     defaultScale: 1,
   },

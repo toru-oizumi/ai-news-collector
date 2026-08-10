@@ -155,6 +155,10 @@ export async function pushOneToNotion(article: Article): Promise<string | null> 
             Status: {
               select: { name: "Unread" },
             },
+            // Set by the scorer from SOURCE_META. Omitted rather than sent as null when
+            // absent, so a DB without these properties keeps working unchanged.
+            ...(article.lang ? { Lang: { select: { name: article.lang } } } : {}),
+            ...(article.kind ? { Kind: { select: { name: article.kind } } } : {}),
           },
         }),
       article.title

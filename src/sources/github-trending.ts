@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import { AI_KEYWORDS, GITHUB_TRENDING_CONFIG } from "../config.js";
+import { matchesKeyword } from "../pipeline/keywords.js";
 import type { Article, Fetcher } from "../types.js";
 
 /** A repository parsed from the GitHub Trending page. */
@@ -55,10 +56,7 @@ export function parseTrendingHtml(html: string): TrendingRepo[] {
  * matches one of the shared AI keywords. Exported for unit testing.
  */
 export function isAiRepo(repo: TrendingRepo): boolean {
-  const text = ` ${`${repo.fullName} ${repo.description}`.toLowerCase()} `;
-  return AI_KEYWORDS.some((kw) =>
-    kw.length <= 3 ? new RegExp(`\\b${kw}\\b`).test(text) : text.includes(kw)
-  );
+  return matchesKeyword(`${repo.fullName} ${repo.description}`, AI_KEYWORDS);
 }
 
 /** Map a trending repo to a normalized Article (crowd score = stars gained in the window). */
