@@ -26,6 +26,12 @@ No new schedule or external integration has been added.
 
 - Every scored/filtered candidate enters `.runtime/pending.json` before a Notion write.
   The old English/Japanese model quotas no longer discard eligible candidates.
+- Within each bounded save window, articles published in the last seven days run first,
+  newest publication first, with score breaking ties. Old, unknown-date and future-date
+  entries remain in FIFO order afterward; no backlog is discarded. When a rediscovered
+  URL wins scoring, its original backlog collection time and known publication date
+  are retained. Reprioritization
+  does not make old news eligible for the brief or pad a short brief with old articles.
 - `.runtime/confirmed.json` remembers successful saves so a large, mostly unchanged
   feed does not require thousands of Notion lookups every six hours.
 - Before an unconfirmed save, the collector queries Notion for URL spellings covering
@@ -78,6 +84,25 @@ It uses existing page blocks, so no database schema migration is needed.
 | `insufficient_evidence` | Body too short to support a summary | No |
 | `non_ai` | Title/body fails the AI-topic gate | No |
 | `invalid_response` | Invalid JSON, abstention or unsupported output | No |
+
+Processing state optionally includes a `failure` diagnostic. Body diagnostics distinguish
+HTTP status, unsupported content type, missing article container, empty extracted text,
+timeout, network failure and browser failure, with the HTTP/browser transport recorded.
+They do not claim to identify the upstream reason behind an HTTP 403.
+
+The [Mistral error format](https://docs.mistral.ai/resources/error-glossary) includes
+a machine-readable code separately from its message. Model diagnostics record HTTP
+status, a fixed allowlist of provider error codes
+(other values become `unrecognized`) and valid `Retry-After` values as seconds.
+Error-code parsing reads at most 8 KiB; messages, response text, raw headers, request
+URLs and exception messages are neither logged nor added to the diagnostic. Invalid,
+negative or greater-than-seven-day retry hints are omitted. These hints are diagnostic
+only: the six-hour delay, three-attempt limit and immediate stop on 429 are unchanged.
+Diagnostics replace the previous attempt's failure; successful recovery clears it.
+
+The enrichment queue keeps its existing FIFO order in this change. Fresh raw saves
+can therefore reach the brief without waiting for a model, but fresh AI summaries may
+still wait behind managed enrichment backlog. Old/unmanaged pages are not migrated.
 
 A run handles at most ten eligible pages within a twelve-minute processing budget.
 It reserves an attempt in the page block before generating content. An interrupted run
@@ -209,7 +234,7 @@ feature removal requested by the user.
 
 ## Offline verification and review
 
-Local validation passed: 25 Vitest files / 175 tests, TypeScript, Biome, Markdown lint,
+Local validation passed: 26 Vitest files / 196 tests, TypeScript, Biome, Markdown lint,
 `actionlint` for the pipeline and optional Slack workflows, YAML parsing and `git diff --check`.
 The digest dry run and fixture brief also completed without API calls. The installed
 `actionlint` binary was invoked directly to avoid changing the local mise trust setting.
@@ -233,7 +258,10 @@ Regression coverage includes 65 raw saves, partial-save replay, ambiguous commit
 creates, failed duplicate queries, semantic URL query parameters, atomic checkpoints,
 missing/non-HTML bodies, mixed-feed bird sightings, fabricated metrics, truncated model
 responses, the first-429 circuit, the ten-page/time budgets and idempotent Summary/state
-updates. Model/Notion/fetch calls in these tests are mocked.
+updates. Added coverage saves a new article ahead of 3,502 old entries within a
+one-save budget, retains original collection dates on duplicate rediscovery, refuses
+to pad briefs with old backlog, and checks failure-reason separation and diagnostic
+redaction. Model/Notion/fetch calls in these tests are mocked.
 
 The supplied 6,827-row CSV is not present in this checkout. The reported 2,318 empty
 summaries and overall semantic error rate have not been independently measured here.

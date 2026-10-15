@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import { chromium } from "playwright";
 import type { Browser, Page } from "playwright";
+import type { BodyFailure, BodyFetchResult } from "./failures.js";
 
 /**
  * Domains that require a headless browser (JS-rendered content).
@@ -42,13 +43,37 @@ function needsHeadless(url: string): boolean {
  * Returns plain text paragraphs array.
  */
 export async function fetchArticleBody(url: string, maxChars = 12000): Promise<string[]> {
+  return (await fetchArticle(url, maxChars)).paragraphs;
+}
+
+export async function fetchArticle(url: string, maxChars = 12000): Promise<BodyFetchResult> {
   if (needsHeadless(url)) {
     return fetchWithHeadless(url, maxChars);
   }
   return fetchWithCheerio(url, maxChars);
 }
 
-async function fetchWithHeadless(url: string, maxChars: number): Promise<string[]> {
+const failed = (
+  transport: BodyFailure["transport"],
+  reason: BodyFailure["reason"],
+  httpStatus?: number
+): BodyFetchResult => ({
+  paragraphs: [],
+  failure: { stage: "body", transport, reason, httpStatus },
+});
+
+function extractResult(
+  html: string,
+  maxChars: number,
+  transport: BodyFailure["transport"]
+): BodyFetchResult {
+  const $ = cheerio.load(html);
+  if (!$("article, main, [role=main]").length) return failed(transport, "missing_article");
+  const paragraphs = extractParagraphs(html, maxChars);
+  return paragraphs.length ? { paragraphs } : failed(transport, "empty_article");
+}
+
+async function fetchWithHeadless(url: string, maxChars: number): Promise<BodyFetchResult> {
   let page: Page | undefined;
   try {
     const browser = await getBrowser();
@@ -56,20 +81,24 @@ async function fetchWithHeadless(url: string, maxChars: number): Promise<string[
     // Use "domcontentloaded" instead of "networkidle" — SPAs with background
     // requests can keep network busy indefinitely, causing consistent timeouts.
     const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
-    if (!response?.ok()) return [];
+    if (!response) return failed("browser", "network_error");
+    if (!response.ok()) return failed("browser", "http_error", response.status());
+    const contentType = response.headers()["content-type"] ?? "";
+    if (!contentType.includes("text/html") && !contentType.includes("text/plain"))
+      return failed("browser", "unsupported_content_type");
     const html = await page.content();
-    return extractParagraphs(html, maxChars);
+    return extractResult(html, maxChars, "browser");
   } catch (err) {
-    console.warn(
-      `[Fetcher] Headless fetch failed for ${url}: ${err instanceof Error ? err.message : String(err)}`
+    return failed(
+      "browser",
+      err instanceof Error && err.name === "TimeoutError" ? "timeout" : "browser_error"
     );
-    return [];
   } finally {
-    await page?.close();
+    await page?.close().catch(() => undefined);
   }
 }
 
-async function fetchWithCheerio(url: string, maxChars: number): Promise<string[]> {
+async function fetchWithCheerio(url: string, maxChars: number): Promise<BodyFetchResult> {
   try {
     const res = await fetch(url, {
       headers: {
@@ -80,17 +109,22 @@ async function fetchWithCheerio(url: string, maxChars: number): Promise<string[]
       redirect: "follow",
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) return failed("http", "http_error", res.status);
 
     const contentType = res.headers.get("content-type") ?? "";
     if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
-      return [];
+      return failed("http", "unsupported_content_type");
     }
 
     const html = await res.text();
-    return extractParagraphs(html, maxChars);
-  } catch {
-    return [];
+    return extractResult(html, maxChars, "http");
+  } catch (err) {
+    return failed(
+      "http",
+      err instanceof Error && ["TimeoutError", "AbortError"].includes(err.name)
+        ? "timeout"
+        : "network_error"
+    );
   }
 }
 

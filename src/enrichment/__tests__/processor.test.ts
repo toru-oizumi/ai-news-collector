@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { MistralRequestError } from "../../digest/failures.js";
 import { type EnrichmentRow, enrichOne } from "../processor.js";
 import { eligible, readState } from "../state.js";
 
@@ -20,7 +21,7 @@ const row = (): EnrichmentRow => ({
   },
 });
 const dependencies = () => ({
-  fetchBody: vi.fn().mockResolvedValue([body]),
+  fetchBody: vi.fn().mockResolvedValue({ paragraphs: [body] }),
   generate: vi.fn().mockResolvedValue({
     text: JSON.stringify({
       relevant: true,
@@ -51,9 +52,11 @@ describe("evidence-gated enrichment", () => {
 
   it("does not summarize Northern Gannet sightings even if the source is a famous AI blog", async () => {
     const deps = dependencies();
-    deps.fetchBody.mockResolvedValue([
-      "Northern Gannet. A seabird was observed flying near the coast. The observer recorded the location, date, plumage and behaviour of the bird during an afternoon walk along the shore.",
-    ]);
+    deps.fetchBody.mockResolvedValue({
+      paragraphs: [
+        "Northern Gannet. A seabird was observed flying near the coast. The observer recorded the location, date, plumage and behaviour of the bird during an afternoon walk along the shore.",
+      ],
+    });
     const article = {
       ...row(),
       title: "Northern Gannet",
@@ -72,7 +75,7 @@ describe("evidence-gated enrichment", () => {
     "abstains when body is missing or insufficient: %j",
     async ({ paragraphs }) => {
       const deps = dependencies();
-      deps.fetchBody.mockResolvedValue(paragraphs);
+      deps.fetchBody.mockResolvedValue({ paragraphs });
       await enrichOne(row(), deps);
       expect(deps.generate).not.toHaveBeenCalled();
       expect(deps.persist.mock.calls[0][2]).toBe("");
@@ -84,11 +87,26 @@ describe("evidence-gated enrichment", () => {
 
   it("opens the rate-limit circuit on the first 429 with no retries or sleeps", async () => {
     const deps = dependencies();
-    deps.generate.mockRejectedValue(new Error("Mistral HTTP 429"));
+    deps.generate.mockRejectedValue(
+      new MistralRequestError({
+        stage: "model",
+        reason: "http_error",
+        httpStatus: 429,
+        code: "rate_limit_exceeded",
+        retryAfterSeconds: 90,
+      })
+    );
     expect(await enrichOne(row(), deps)).toMatchObject({ rateLimited: true });
     expect(deps.generate).toHaveBeenCalledTimes(1);
     expect(deps.persist.mock.calls[0][1]).toMatchObject({
       status: "rate_limited",
+      failure: {
+        stage: "model",
+        reason: "http_error",
+        httpStatus: 429,
+        code: "rate_limit_exceeded",
+        retryAfterSeconds: 90,
+      },
       attempts: 1,
       nextAttemptAt: "1970-01-01T06:00:00.000Z",
     });
@@ -145,10 +163,29 @@ it("rejects fabricated benchmark numbers even alongside a genuine supporting quo
 
 it("does not let an AI-related title qualify a non-AI body", async () => {
   const deps = dependencies();
-  deps.fetchBody.mockResolvedValue([
-    "A seabird was observed flying near the coast. The observer recorded the location, date, plumage and behaviour of the bird during an afternoon walk along the shore.",
-  ]);
+  deps.fetchBody.mockResolvedValue({
+    paragraphs: [
+      "A seabird was observed flying near the coast. The observer recorded the location, date, plumage and behaviour of the bird during an afternoon walk along the shore.",
+    ],
+  });
   await enrichOne(row(), deps); // AI title retained, unrelated body supplied
   expect(deps.generate).not.toHaveBeenCalled();
   expect(deps.persist.mock.calls[0][1].status).toBe("non_ai");
+});
+
+it("persists safe fetch diagnostics and clears stale failures on recovery", async () => {
+  const deps = dependencies();
+  deps.fetchBody.mockResolvedValueOnce({
+    paragraphs: [],
+    failure: { stage: "body", reason: "http_error", transport: "browser", httpStatus: 403 },
+  });
+  await enrichOne(row(), deps);
+  const failed = deps.persist.mock.calls[0][1];
+  expect(failed).toMatchObject({
+    status: "body_unavailable",
+    failure: { stage: "body", reason: "http_error", httpStatus: 403 },
+  });
+  expect(deps.generate).not.toHaveBeenCalled();
+  await enrichOne({ ...row(), state: failed }, deps);
+  expect(deps.persist.mock.calls[1][1]).toMatchObject({ status: "ready", failure: undefined });
 });
