@@ -14,7 +14,8 @@ The supplied incident reports 39 of 65 saved before cancellation.
 
 Collection now saves raw evidence without Mistral. English summaries run afterward;
 full translation and Slack posting/reaction sync are suspended in the entry points.
-The existing optional site publishing code remains, but was not executed for this work.
+Explicit optional commands preserve manual delivery, reaction sync and local full
+translation. The existing optional site publishing code remains, but was not executed.
 No new schedule or external integration has been added.
 
 ## Collection and replay
@@ -41,7 +42,11 @@ No new schedule or external integration has been added.
 Workflow and job concurrency groups serialize the pipeline and checkpoint writers,
 including standalone manual enrichment. Each stage restores the latest branch-scoped
 checkpoint, saves it under a unique run/attempt key even after failure, and uploads a
-30-day recovery artifact. No credentials are put in these files. The files do contain
+30-day recovery artifact. The called enrichment workflow also downloads the collector
+artifact from the same run, so cache upload/lookup failure cannot silently substitute an
+older queue during the collection-to-enrichment handoff. Missing handoff artifacts fail
+enrichment; saved raw data can still reach the existing publish job. A failed handoff
+does not republish an older restored checkpoint as a new enrichment checkpoint. No credentials are put in these files. The files do contain
 article excerpts and URLs, so keep recovery artifacts within the repository's access
 boundary.
 
@@ -61,7 +66,7 @@ It uses existing page blocks, so no database schema migration is needed.
 | State | Meaning | Automatic retry |
 | --- | --- | --- |
 | `pending` | Raw article saved; summary not generated | Yes |
-| `excerpt` | Japanese feed excerpt preserved as source material | No model call |
+| `excerpt` | Japanese feed excerpt retained in Summary with an unverified label | No model call |
 | `ready` | Complete model response passed evidence checks | No |
 | `body_unavailable` | Fetch, HTTP, content type or extraction failed | After 6 hours, at most 3 attempts |
 | `rate_limited` | Mistral returned 429; the entire run stops | After 6 hours, at most 3 attempts |
@@ -88,7 +93,9 @@ finish normally, parse as complete JSON, include exact body quotations, and cont
 Latin terms or numbers absent from the supplied body. Plain prose and truncated JSON
 are rejected. Prompt text treats article content as untrusted source data. These checks
 reduce unsupported content; matching quotations do not prove semantic correctness.
-The conservative topic/term checks can reject valid articles and paraphrases.
+The topic gate now requires evidence in the body itself, not only an AI-related title.
+These checks do not detect all reversed causality, wrong subjects or invented Japanese
+claims. The conservative topic/term checks can reject valid articles and paraphrases.
 
 Successful enrichment replaces the same `Summary` property and owned code block.
 It never appends digest/translation blocks and never changes user reading `Status`.
@@ -136,9 +143,74 @@ external writers or delayed visibility after an ambiguous create can still defea
 reconciliation. These limitations need a durable transactional store for stronger
 exactly-once guarantees; this change does not introduce one.
 
+## Compatibility and migration
+
+This branch is **not a drop-in behavior-preserving replacement** for the previous
+schedule. No live schedule was changed, but adopting it as-is would stop automatic
+Slack parent/reply posts, Slack reaction-to-Status sync, full-translation page appends,
+and automatic `Unread` to `Digested` transitions. Existing Slack/Mistral secrets alone
+do not re-enable those paths. Historical messages, translations and Status values are
+retained. Japanese excerpts remain visible in Summary with an unverified label.
+
+The following explicit commands preserve manual use without reconnecting a schedule.
+They were tested with mocks or local fixtures only. Commands containing `--execute`
+perform external actions and require separate execution authorization; none were run
+against live services during development.
+
+```bash
+# Local preparation only; review the generated file. Refuses to overwrite an outbox.
+npm run optional:slack -- prepare snapshot.json outbox.json CHANNEL_ID
+
+# Only when posting is authorized; checks channel against SLACK_CHANNEL_ID.
+npm run optional:slack -- deliver outbox.json --execute
+
+# Only when Notion Status writes are authorized; preserves higher ranked statuses.
+npm run optional:reactions -- --execute
+
+# Existing Mistral model; one chunk per call, resumable local output, no Notion append.
+npm run optional:translate -- body.json translation.json --execute
+```
+
+`body.json` contains `title`, `url` and `paragraphs` (a string array). Repeat translation
+with the same input/output after respecting Mistral pacing until `complete` is true.
+All supplied input is chunked, including text beyond the old 8,000-character truncation.
+Completion means all chunks were processed, not that semantic fidelity was verified.
+Keep translation invocations serial. The old append-only Notion writer is deliberately
+not reconnected: its multi-request append can duplicate sections after a partial failure.
+**Automatic full translation into Notion is still unavailable in this branch.** The
+local translation artifact is a manual alternative, not identical behavior.
+
+Slack delivery retains parent plus per-article replies and source links in fallback
+text so reactions can resolve the article. It locks the outbox locally, records intent
+before each post, and persists confirmed timestamps. Replays skip confirmed posts;
+only an explicit HTTP 429 rejection is automatically retryable on a later invocation.
+Transport errors, server errors, malformed results, and interrupted `sending` records
+require manual reconciliation with Slack history. Do not delete/reset the ledger or
+create another file for the same batch to bypass this safeguard. The same retained
+outbox provides replay protection; losing it or intentionally creating a second batch
+can duplicate delivery. Exactly-once delivery is not claimed. Stored summaries in the
+prepared batch are labelled unverified and should be reviewed before posting.
+
+Before adoption choose one of these migration policies:
+
+1. Keep raw collection/enrichment automatic and use the explicit optional commands.
+   This is the behavior currently implemented; no automatic delivery is retained.
+2. Preserve automatic Slack/reaction behavior via separate jobs with the outbox and a
+   durable delivery-state handoff. This needs a follow-up reviewed workflow change;
+   setting the current secrets or a nonexistent feature flag is insufficient.
+3. Also preserve automatic Notion full translation. This requires a separate bounded
+   translation queue and owned-block replacement/reconciliation, rather than restoring
+   the unsafe append-only writer. It is not implemented by the local translation CLI.
+
+Independent review identified the Japanese-Summary regression, missing fallback source
+links for reaction sync, and ambiguous Slack responses incorrectly classed as retryable.
+These were fixed with regression tests. The remaining automatic-delivery/Notion-translation
+migration differences are product choices and must not be described as a permanent
+feature removal requested by the user.
+
 ## Offline verification and review
 
-Local validation passed: 19 Vitest files / 144 tests, TypeScript, Biome, Markdown lint,
+Local validation passed: 21 Vitest files / 158 tests, TypeScript, Biome, Markdown lint,
 `actionlint` for all three pipeline workflows, YAML parsing and `git diff --check`.
 The digest dry run and fixture brief also completed without API calls. The installed
 `actionlint` binary was invoked directly to avoid changing the local mise trust setting.

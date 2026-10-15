@@ -29,7 +29,12 @@ export interface ProcessingState {
 export function initialState(article: Article): ProcessingState {
   return {
     marker: STATE_MARKER,
-    status: article.lang === "ja" ? "excerpt" : "pending",
+    status:
+      article.lang === "ja"
+        ? article.abstract.trim()
+          ? "excerpt"
+          : "insufficient_evidence"
+        : "pending",
     attempts: 0,
     abstract: article.abstract.slice(0, 1000),
     updatedAt: article.fetchedAt.toISOString(),

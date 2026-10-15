@@ -2,6 +2,11 @@ name: Generate Grounded Summaries
 
 on:
   workflow_call:
+    inputs:
+      checkpoint_artifact:
+        type: string
+        default: ""
+        required: false
   workflow_dispatch:
 
 jobs:
@@ -23,6 +28,13 @@ jobs:
           path: .runtime
           key: pipeline-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}-digest
           restore-keys: pipeline-${{ github.ref_name }}-
+      # Same-run handoff uses the collector artifact, never an older cache entry.
+      - uses: actions/download-artifact@v4
+        id: handoff
+        if: ${{ inputs.checkpoint_artifact != '' }}
+        with:
+          name: ${{ inputs.checkpoint_artifact }}
+          path: .runtime
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
@@ -40,12 +52,12 @@ jobs:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
         run: npm run digest
       - uses: actions/cache/save@v4
-        if: always()
+        if: ${{ always() && (inputs.checkpoint_artifact == '' || steps.handoff.outcome == 'success') }}
         with:
           path: .runtime
           key: pipeline-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}-digest
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && (inputs.checkpoint_artifact == '' || steps.handoff.outcome == 'success') }}
         with:
           name: enrichment-checkpoint-${{ github.run_attempt }}
           path: .runtime/*.json

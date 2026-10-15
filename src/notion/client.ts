@@ -297,7 +297,7 @@ export async function pushOneToNotion(article: Article): Promise<string | null> 
           number: article.score,
         },
         Summary: {
-          rich_text: [{ text: { content: article.summary.slice(0, 2000) } }],
+          rich_text: [{ text: { content: collectionSummary(article).slice(0, 2000) } }],
         },
         Published: article.publishedAt
           ? { date: { start: article.publishedAt.toISOString().split("T")[0] } }
@@ -321,4 +321,13 @@ export async function pushOneToNotion(article: Article): Promise<string | null> 
     console.warn(`[Notion] Save deferred for "${article.title.slice(0, 60)}"`);
     return null;
   }
+}
+
+/** Preserve Japanese feed excerpts without presenting them as model-verified summaries. */
+export function collectionSummary(article: Article): string {
+  if (article.lang === "ja") {
+    const excerpt = article.abstract.trim().slice(0, 300);
+    return excerpt ? `【フィード抜粋・未検証】${excerpt}` : "";
+  }
+  return article.summary;
 }

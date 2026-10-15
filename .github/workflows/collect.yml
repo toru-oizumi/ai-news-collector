@@ -55,6 +55,8 @@ jobs:
     needs: collect
     if: ${{ !cancelled() && needs.collect.outputs.ready == 'true' }}
     uses: ./.github/workflows/digest.yml
+    with:
+      checkpoint_artifact: collection-checkpoint-${{ github.run_attempt }}
     secrets: inherit
 
   publish:

@@ -142,3 +142,13 @@ it("rejects fabricated benchmark numbers even alongside a genuine supporting quo
   expect(deps.persist.mock.calls[0][1].status).toBe("invalid_response");
   expect(deps.persist.mock.calls[0][2]).toBe("");
 });
+
+it("does not let an AI-related title qualify a non-AI body", async () => {
+  const deps = dependencies();
+  deps.fetchBody.mockResolvedValue([
+    "A seabird was observed flying near the coast. The observer recorded the location, date, plumage and behaviour of the bird during an afternoon walk along the shore.",
+  ]);
+  await enrichOne(row(), deps); // AI title retained, unrelated body supplied
+  expect(deps.generate).not.toHaveBeenCalled();
+  expect(deps.persist.mock.calls[0][1].status).toBe("non_ai");
+});

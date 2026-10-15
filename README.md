@@ -27,7 +27,8 @@ publish
 ```
 
 Automatic Slack posting, reaction sync, and full translation are suspended in this
-pipeline. Their low-level helpers remain, but scheduled entry points do not call them.
+proposed pipeline. Explicit optional commands preserve manual use; scheduled entry
+points do not call them.
 This prevents raw saves and publication from depending on model waits or a partially
 posted Slack thread. No new delivery integration is enabled.
 
@@ -75,9 +76,10 @@ Get a free API Key from [Mistral AI Console](https://console.mistral.ai/) → AP
 
 ### 4. Slack (suspended)
 
-The collector no longer reads Slack credentials or calls Slack. Existing secrets may
-remain configured; they are not passed to the collection workflow. Restoring automatic
-delivery requires a separate persisted delivery/outbox design and review.
+The collector no longer calls Slack. Existing secrets alone do not restore automatic
+posting or reaction sync. Use the reviewed outbox commands in
+[Compatibility and migration](docs/reliability.md#compatibility-and-migration), or choose
+to reconnect separate scheduled jobs before adopting this branch.
 
 ### 5. Qiita (optional)
 
@@ -251,8 +253,8 @@ entry is a compile error rather than a silent default.
 ### Japanese sources
 
 Hatena / Zenn / Qiita are classified `lang: "ja"` in `SOURCE_META`. They skip Mistral.
-The original feed excerpt is preserved in the processing block with status `excerpt`,
-not presented as a generated summary. Collection quotas no longer depend on language
+The original feed excerpt is preserved in the processing block with status `excerpt`
+and in Summary with an explicit unverified-excerpt label. Collection quotas no longer depend on language
 or model capacity; the deadline leaves unsaved candidates checkpointed for replay.
 
 Because `keywordBonus` is matched against Japanese text too, Japanese equivalents are

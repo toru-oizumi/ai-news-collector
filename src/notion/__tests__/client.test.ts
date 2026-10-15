@@ -65,3 +65,10 @@ describe("idempotent Notion persistence", () => {
     expect(request.children[0].code.rich_text[0].text.content).toContain("Original feed excerpt");
   });
 });
+
+it("preserves Japanese feed excerpts in Summary with an explicit unverified label", async () => {
+  const { collectionSummary } = await import("../client.js");
+  const japanese = { ...article, lang: "ja" as const };
+  expect(collectionSummary(japanese)).toBe("【フィード抜粋・未検証】Original feed excerpt");
+  expect(collectionSummary({ ...japanese, abstract: " " })).toBe("");
+});

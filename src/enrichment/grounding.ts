@@ -2,12 +2,12 @@ import { AI_KEYWORDS, AI_KEYWORDS_JA } from "../config.js";
 import { matchesKeyword } from "../pipeline/keywords.js";
 
 export function evidenceStatus(
-  title: string,
+  _title: string,
   paragraphs: string[]
 ): "non_ai" | "insufficient_evidence" | null {
   const body = paragraphs.join("\n\n").trim();
   if (body.length < 120) return "insufficient_evidence";
-  if (!matchesKeyword(`${title}\n${body}`, [...AI_KEYWORDS, ...AI_KEYWORDS_JA])) return "non_ai";
+  if (!matchesKeyword(body, [...AI_KEYWORDS, ...AI_KEYWORDS_JA])) return "non_ai";
   return null;
 }
 
