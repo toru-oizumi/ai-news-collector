@@ -5,7 +5,7 @@ export const env = {
   NOTION_API_KEY: process.env.NOTION_API_KEY ?? "",
   NOTION_DATABASE_ID: process.env.NOTION_DATABASE_ID ?? "",
   MISTRAL_API_KEY: process.env.MISTRAL_API_KEY ?? "",
-  // Optional Slack delivery — when both are set, a digest is posted after the run.
+  // Retained for the standalone Slack helpers; collection no longer posts/syncs.
   SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
   SLACK_CHANNEL_ID: process.env.SLACK_CHANNEL_ID ?? "",
   // Optional Qiita token — raises the API v2 rate limit from 60 to 1000 requests/hour.
@@ -158,7 +158,11 @@ export const RSS_SOURCES: RSSSourceConfig[] = [
 
   // Tier 4: Practitioner / curation (added in Phase 1 to counter academic bias)
   // Personal blog of Simon Willison — high-signal LLM + dev tooling commentary.
-  { name: "Simon Willison", url: "https://simonwillison.net/atom/everything/" },
+  {
+    name: "Simon Willison",
+    url: "https://simonwillison.net/atom/everything/",
+    keywords: AI_KEYWORDS,
+  },
   // Jack Clark's weekly AI newsletter (Substack standard feed).
   { name: "Import AI", url: "https://importai.substack.com/feed" },
   // AI engineering podcast/newsletter (Substack). NOTE: RSS may truncate body — verify in prod.
@@ -229,12 +233,6 @@ export const QIITA_CONFIG = {
   /** Max articles kept across all tag queries (after dedup). */
   maxItems: 20,
   maxAgeDays: 7,
-};
-
-/** How many Japanese articles to push per run. They skip Mistral summarization, so this
- *  is independent of MISTRAL_CONFIG.maxSummarize and does not affect the token budget. */
-export const JP_CONFIG = {
-  maxPerRun: 15,
 };
 
 // ── GitHub Trending (official site scrape — Phase 2, replaces unofficial gh-pages RSS) ──
@@ -444,8 +442,6 @@ export const SCORE_CONFIG = {
 export const MISTRAL_CONFIG = {
   model: "mistral-small-latest",
   apiUrl: "https://api.mistral.ai/v1/chat/completions",
-  /** Max articles to summarise per run (50 x ~32s = ~27min, fits in 45min timeout) */
-  maxSummarize: 50,
   /** Delay between requests (ms) — free tier is 2 RPM, so 31s interval */
   delayMs: 31_000, // ~1.9 RPM, safe under 2 RPM limit
 };

@@ -5,3 +5,5 @@ dist/
 
 .claude/settings.local.json
 .serena
+
+.runtime/

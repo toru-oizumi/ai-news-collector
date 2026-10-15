@@ -20,7 +20,9 @@
     "check:fix": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "lint:md": "markdownlint-cli2 \"**/*.md\" \"#**/node_modules\" \"#.serena\"",
-    "lint:md:fix": "markdownlint-cli2 --fix \"**/*.md\" \"#**/node_modules\" \"#.serena\""
+    "lint:md:fix": "markdownlint-cli2 --fix \"**/*.md\" \"#**/node_modules\" \"#.serena\"",
+    "brief": "node --no-deprecation --import tsx src/brief-main.ts",
+    "recover:enrichment": "node --no-deprecation --import tsx src/enrichment/recover-main.ts"
   },
   "dependencies": {
     "@notionhq/client": "^2.2.15",

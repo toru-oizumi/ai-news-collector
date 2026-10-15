@@ -2,6 +2,7 @@ import { MISTRAL_CONFIG, env } from "../config.js";
 
 interface MistralResponse {
   choices?: {
+    finish_reason?: string;
     message?: {
       content?: string;
     };
@@ -45,15 +46,15 @@ export async function callMistral(
       temperature: 0.3,
       max_tokens: maxTokens,
     }),
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(45_000),
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Mistral API ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`Mistral HTTP ${res.status}`);
   }
 
   const data = (await res.json()) as MistralResponse;
+  if (data.choices?.[0]?.finish_reason !== "stop") throw new Error("Mistral incomplete response");
   return {
     text: data.choices?.[0]?.message?.content?.trim() ?? "",
     promptTokens: data.usage?.prompt_tokens ?? 0,

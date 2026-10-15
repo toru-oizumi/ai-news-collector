@@ -5,7 +5,7 @@ export interface Article {
   source: Source;
   category: Category[];
   score: number;
-  summary: string; // Gemini-generated Japanese summary (empty if skipped)
+  summary: string; // Grounded Japanese summary; empty until enrichment succeeds
   publishedAt: Date | null;
   fetchedAt: Date;
   abstract: string; // original abstract / description

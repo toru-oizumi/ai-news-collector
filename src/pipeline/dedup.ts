@@ -27,12 +27,37 @@ function rank(article: Article): number {
   return article.score > 0 ? article.score : (article.crowdScore ?? 0);
 }
 
-function normalizeForDedup(url: string): string {
+export function normalizeForDedup(url: string): string {
   try {
     const u = new URL(url);
-    // Strip protocol, www, trailing slash
-    return `${u.hostname.replace(/^www\./, "")}${u.pathname.replace(/\/$/, "")}`.toLowerCase();
+    for (const key of [...u.searchParams.keys()]) {
+      if (key.startsWith("utm_") || ["ref", "fbclid", "gclid"].includes(key))
+        u.searchParams.delete(key);
+    }
+    u.searchParams.sort();
+    // Preserve path case and semantic query parameters (e.g. /item?id=123).
+    return `${u.host.replace(/^www\./, "")}${u.pathname.replace(/\/$/, "")}${u.search}`;
   } catch {
     return url.toLowerCase();
   }
+}
+
+/** Exact lookup alternatives for URL spellings historically saved by the collector. */
+export function lookupUrls(url: string): string[] {
+  const key = normalizeForDedup(url);
+  return [
+    ...new Set([
+      url,
+      ...["https://", "http://"].flatMap((protocol) =>
+        ["", "www."].flatMap((www) => {
+          const parsed = new URL(`${protocol}${www}${key}`);
+          const other = new URL(parsed);
+          other.pathname = parsed.pathname.endsWith("/")
+            ? parsed.pathname.slice(0, -1)
+            : `${parsed.pathname}/`;
+          return [parsed.toString(), other.toString()];
+        })
+      ),
+    ]),
+  ];
 }

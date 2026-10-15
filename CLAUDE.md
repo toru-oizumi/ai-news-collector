@@ -3,7 +3,7 @@
 ## Project Overview
 
 AI/ML ニュースを各種ソースから自動収集し Notion Database に蓄積するツール。
-GitHub Actions で毎朝 09:00 JST (00:00 UTC) に実行される。
+GitHub Actions で 6 時間ごとに収集する。運用と復旧手順は [docs/reliability.md](docs/reliability.md) を参照する。
 
 ### 技術スタック
 
@@ -36,11 +36,13 @@ GitHub Actions で毎朝 09:00 JST (00:00 UTC) に実行される。
 │   │   ├── dedup.ts             # URL 正規化・重複排除
 │   │   ├── keywords.ts          # キーワード照合 (短語は単語境界マッチ)
 │   │   ├── scorer.ts            # スコアリング・カテゴリ自動分類・lang/kind 付与
-│   │   ├── summarizer.ts        # Mistral API 日本語要約
 │   │   └── __tests__/           # Vitest テスト
 │   │       ├── dedup.test.ts
 │   │       ├── keywords.test.ts
 │   │       └── scorer.test.ts
+│   ├── collection/          # 未保存キュー・保存済み URL 台帳
+│   ├── enrichment/          # 本文根拠の検査・処理状態・再試行・Notion 更新
+│   ├── brief/               # 保存済みスナップショットから最大 3 件を表示
 │   ├── notion/
 │   │   └── client.ts        # Notion API クライアント (読み書き・重複確認・全件エクスポート)
 │   └── export/
@@ -77,8 +79,10 @@ GitHub Actions で毎朝 09:00 JST (00:00 UTC) に実行される。
 mise install               # Node.js 24 をインストール
 
 # 実行
-npm run collect            # 本番実行 (Notion + Mistral 使用)
-npm run collect:dry        # ドライラン (外部 API 呼び出しなし)
+npm run collect            # 本番実行 (Notion 保存のみ、Mistral / Slack は呼ばない)
+npm run collect:dry        # フィードは取得する。Notion / Mistral / Slack への書き込みなし
+npm run digest:dry         # 外部 API 呼び出しなし
+npm run brief -- <JSON>    # ローカルのサイト用スナップショットから表示
 
 # 閲覧サイト (web/ は独立パッケージ)
 npm run export:web         # Notion → web/src/data/articles.json
@@ -123,28 +127,24 @@ Dedup (URL 正規化: www除去・末尾スラッシュ・クエリパラム)
 Score & Categorize (sourceWeights + keywordBonus + crowdBonus → minScore フィルタ)
  └── SOURCE_META から lang (en/ja) と kind (primary/secondary) を付与
       ↓
-Notion Dedup (本番のみ: 既存 URL を DB から取得して除外)
+Checkpoint (全候補を .runtime/pending.json に保存)
       ↓
-Select (英語は maxSummarize 枠, 日本語は JP_CONFIG.maxPerRun 枠で別建て)
+Notion URL 照合 → 元の抜粋と処理状態を保存 (要約 API を呼ばない)
       ↓
-Summarize (Mistral Small: 31s 間隔で 2 RPM 制限回避)
- └── lang === "ja" はスキップし abstract を summary に流用 (トークン消費 0)
+Enrichment Queue (保存済みページを .runtime/enrichment.json に記録)
       ↓
-Push to Notion Database
+別ジョブで本文取得 → 関連性・根拠の検査 → Mistral 要約 → Summary と管理ブロックの置換
 ```
 
-### 日本語ソースの扱い
+収集と要約の上限、処理状態、復旧手順は [docs/reliability.md](docs/reliability.md) が正典。
+ローカルでも同じ DB と `.runtime/` に対して並行実行しない。
+重複確認の失敗時は作成せず、応答不明の作成を直ちに再試行しない。
+本文取得に失敗した場合、タイトルだけから要約を作らない。
+既存の Summary や閲覧 Status を移行・修正する処理は自動実行しない。
 
-`SOURCE_META` で `lang: "ja"` に分類されたソース (はてブ / Zenn / Qiita) は 2 点が変わる。
-
-- **Mistral 要約をスキップ** — 日本語→日本語の往復は 31s のレート制限枠を消費して
-  フィード抜粋とほぼ同じものを作るだけなので、`abstract` をそのまま `summary` に使う。
-  要約枠とは独立した `JP_CONFIG.maxPerRun` 枠を持つ。
-- **digest ジョブ (Job 2) の対象外** — 同じ理由。Notion の `Lang` プロパティで除外する。
-
-`keywordBonus` は日本語テキストにも適用されるため、日本語相当語を既存ルールに
-同居させている (`"agent"` の隣に `"エージェント"` など)。これがないと日本語記事は
-base + crowd だけで並び、深い検証記事と雑記が区別できなくなる。
+日本語記事は要約 API を使わず、元の抜粋を管理ブロックに `excerpt` として残す。
+要約待ち時間のために未保存記事を切り捨てない。
+全文翻訳、Slack 投稿、リアクション同期は現行エントリポイントでは呼ばない。
 
 ## 閲覧サイト (web/)
 
@@ -203,7 +203,7 @@ Notion → JSON スナップショット → Astro SSG の 3 段。Astro から 
 - `SCORE_CONFIG.keywordBonus`: キーワードマッチ時のボーナス
 - `SCORE_CONFIG.crowd.scale`: ソース間で票の桁を揃える係数
 - `SCORE_CONFIG.minScore`: フィルタ閾値 (デフォルト 30)
-- `QIITA_CONFIG` / `JP_CONFIG`: Qiita のタグ・日本語記事の 1 実行あたり件数
+- `QIITA_CONFIG`: Qiita のタグ・取得件数
 - `MISTRAL_CONFIG`: モデル名・RPM 制限設定
 
 新しい `Source` を追加したら `SOURCE_META` と `SCORE_CONFIG.sourceWeights` の両方に
@@ -251,16 +251,16 @@ Notion → JSON スナップショット → Astro SSG の 3 段。Astro から 
 |--------|------|------|
 | `NOTION_API_KEY` | 本番のみ | Notion Integration の API Key |
 | `NOTION_DATABASE_ID` | 本番のみ | 対象 Database の ID |
-| `MISTRAL_API_KEY` | 本番のみ | Mistral AI Console の API Key |
-| `SLACK_BOT_TOKEN` | 任意 | Slack Bot Token (`xoxb-…`, `chat:write` 権限)。設定時のみ収集後にダイジェスト投稿 |
-| `SLACK_CHANNEL_ID` | 任意 | 投稿先チャンネル ID。Bot を事前に招待しておく必要あり |
+| `MISTRAL_API_KEY` | 要約ジョブのみ | Mistral AI Console の API Key |
+| `SLACK_BOT_TOKEN` | ヘルパー用 | 現行の収集・要約ジョブでは未使用 |
+| `SLACK_CHANNEL_ID` | ヘルパー用 | 現行の収集・要約ジョブでは未使用 |
 | `QIITA_TOKEN` | 任意 | Qiita API のレート上限を 60→1000 req/h に引き上げ。未設定でも動作 |
 | `CLOUDFLARE_API_TOKEN` | 任意 | 閲覧サイトのデプロイ用 (Workers Scripts: Edit)。未設定ならビルドのみ |
 | `CLOUDFLARE_ACCOUNT_ID` | 任意 | 同上 |
 
 ローカル開発では `.env` ファイルに記述 (`.gitignore` 済み)。
-ドライラン (`--dry-run`) では環境変数不要。
-Slack 連携は `SLACK_BOT_TOKEN` と `SLACK_CHANNEL_ID` が両方設定されている場合のみ有効 (best-effort: 失敗しても収集処理は継続)。
+ドライラン (`--dry-run`) では環境変数不要。収集のドライランはフィード取得を行う。
+外部通信を避ける検証にはモック、fixture、`digest:dry`、`brief` を使う。
 
 ---
 
@@ -281,10 +281,7 @@ Slack 連携は `SLACK_BOT_TOKEN` と `SLACK_CHANNEL_ID` が両方設定され�
 
 ---
 
-## Cost (Free Tier)
+## Runtime budgets
 
-| サービス | 無料枠 | 使用量 |
-|---------|--------|--------|
-| GitHub Actions | 月 2,000 分 (private repo) | 1 回 3-5 分 × 30 日 ≈ 150 分 |
-| Mistral API | 1B tokens/month, 2 RPM (free Experiment) | 日次 80 件以下なら余裕 |
-| Notion API | 無料プラン対応 | — |
+収集・要約の実行上限とレート制限時の挙動は [docs/reliability.md](docs/reliability.md) を参照する。
+本番レイテンシでの処理能力や要約の意味的正確性は、ユニットテストの合格だけでは判断しない。

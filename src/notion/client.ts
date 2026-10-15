@@ -1,5 +1,7 @@
 import { APIResponseError, Client } from "@notionhq/client";
 import { SOURCE_META, env } from "../config.js";
+import { initialState, processingBlock } from "../enrichment/state.js";
+import { lookupUrls } from "../pipeline/dedup.js";
 import type { Article } from "../types.js";
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000]; // 3 retries with backoff
@@ -54,6 +56,7 @@ function getClient(): Client {
   if (!notion) {
     notion = new Client({
       auth: env.NOTION_API_KEY,
+      timeoutMs: 20_000,
       fetch: fetch as unknown as NotionFetch,
     });
   }
@@ -63,40 +66,9 @@ function getClient(): Client {
 // ── Check existing URLs in DB for dedup ──
 
 export async function getExistingUrls(): Promise<Set<string>> {
-  const client = getClient();
-  const urls = new Set<string>();
-  let cursor: string | undefined;
-
-  // Paginate through all pages to collect URLs
-  // Notion API returns 100 results per page
-  do {
-    const res = await withRetry(
-      () =>
-        client.databases.query({
-          database_id: env.NOTION_DATABASE_ID,
-          start_cursor: cursor,
-          page_size: 100,
-          filter: {
-            property: "URL",
-            url: { is_not_empty: true },
-          },
-        }),
-      "databases.query"
-    );
-
-    for (const page of res.results) {
-      if ("properties" in page) {
-        const urlProp = page.properties.URL;
-        if (urlProp?.type === "url" && typeof urlProp.url === "string") {
-          urls.add(urlProp.url);
-        }
-      }
-    }
-
-    cursor = res.has_more ? (res.next_cursor ?? undefined) : undefined;
-  } while (cursor);
-
-  return urls;
+  // Use the date-windowed reader: a single cursor chain misses older rows once
+  // the database exceeds Notion's result cap.
+  return new Set((await getAllArticles()).map((article) => article.url));
 }
 
 // ── Read the whole database for the static site export (Phase B) ──
@@ -263,15 +235,13 @@ export interface NotionPageRef {
 /** Find the page whose URL property exactly matches `url`. Returns null if none. */
 export async function getPageByUrl(url: string): Promise<NotionPageRef | null> {
   const client = getClient();
-  const res = await withRetry(
-    () =>
-      client.databases.query({
-        database_id: env.NOTION_DATABASE_ID,
-        page_size: 1,
-        filter: { property: "URL", url: { equals: url } },
-      }),
-    "databases.query(byUrl)"
-  );
+  const res = await client.databases.query({
+    database_id: env.NOTION_DATABASE_ID,
+    page_size: 1,
+    filter: {
+      or: lookupUrls(url).map((candidate) => ({ property: "URL", url: { equals: candidate } })),
+    },
+  });
 
   const page = res.results[0];
   if (!page || !("properties" in page)) return null;
@@ -302,53 +272,53 @@ export async function updateStatus(pageId: string, status: string): Promise<void
 export async function pushOneToNotion(article: Article): Promise<string | null> {
   const client = getClient();
   try {
-    const page = await withRetry(
-      () =>
-        client.pages.create({
-          parent: { database_id: env.NOTION_DATABASE_ID },
-          properties: {
-            Title: {
-              title: [{ text: { content: article.title.slice(0, 200) } }],
-            },
-            URL: {
-              url: article.url,
-            },
-            Source: {
-              select: { name: article.source },
-            },
-            Category: {
-              multi_select: article.category.map((c) => ({ name: c })),
-            },
-            Score: {
-              number: article.score,
-            },
-            Summary: {
-              rich_text: [{ text: { content: article.summary.slice(0, 2000) } }],
-            },
-            Published: article.publishedAt
-              ? { date: { start: article.publishedAt.toISOString().split("T")[0] } }
-              : { date: null },
-            Fetched: {
-              date: { start: article.fetchedAt.toISOString().split("T")[0] },
-            },
-            Status: {
-              select: { name: "Unread" },
-            },
-            // Set by the scorer from SOURCE_META. Omitted rather than sent as null when
-            // absent, so a DB without these properties keeps working unchanged.
-            ...(article.lang ? { Lang: { select: { name: article.lang } } } : {}),
-            ...(article.kind ? { Kind: { select: { name: article.kind } } } : {}),
-          },
-        }),
-      article.title
-    );
+    // A timed-out create may have committed. Check by URL on every queue replay
+    // and never blindly retry a non-idempotent POST.
+    const existing = await getPageByUrl(article.url);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    if (existing) return `https://www.notion.so/${existing.pageId.replace(/-/g, "")}`;
+    const page = await client.pages.create({
+      parent: { database_id: env.NOTION_DATABASE_ID },
+      children: [processingBlock(initialState(article))],
+      properties: {
+        Title: {
+          title: [{ text: { content: article.title.slice(0, 200) } }],
+        },
+        URL: {
+          url: article.url,
+        },
+        Source: {
+          select: { name: article.source },
+        },
+        Category: {
+          multi_select: article.category.map((c) => ({ name: c })),
+        },
+        Score: {
+          number: article.score,
+        },
+        Summary: {
+          rich_text: [{ text: { content: article.summary.slice(0, 2000) } }],
+        },
+        Published: article.publishedAt
+          ? { date: { start: article.publishedAt.toISOString().split("T")[0] } }
+          : { date: null },
+        Fetched: {
+          date: { start: article.fetchedAt.toISOString().split("T")[0] },
+        },
+        Status: {
+          select: { name: "Unread" },
+        },
+        // Set by the scorer from SOURCE_META. Omitted rather than sent as null when
+        // absent, so a DB without these properties keeps working unchanged.
+        ...(article.lang ? { Lang: { select: { name: article.lang } } } : {}),
+        ...(article.kind ? { Kind: { select: { name: article.kind } } } : {}),
+      },
+    });
     // Notion rate limit: 3 requests/sec → ~340ms between requests
     await new Promise((r) => setTimeout(r, 350));
-    // `pages.create` returns a full page object (with `url`) for integration tokens;
-    // fall back to the empty string if the field is somehow absent so the push still counts.
-    return "url" in page ? page.url : "";
-  } catch (err) {
-    console.warn(`[Notion] Failed to create page for "${article.title}":`, err);
+    return `https://www.notion.so/${page.id.replace(/-/g, "")}`;
+  } catch {
+    console.warn(`[Notion] Save deferred for "${article.title.slice(0, 60)}"`);
     return null;
   }
 }

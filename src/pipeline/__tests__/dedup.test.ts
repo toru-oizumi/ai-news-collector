@@ -39,8 +39,6 @@ describe("dedup", () => {
       makeArticle("https://example.com/post"),
       makeArticle("https://example.com/post?utm_source=twitter"),
     ];
-    // Note: UTM stripping happens in rss-fetcher normalizeUrl, not in dedup
-    // dedup normalizes for host+path only (ignores query params)
     expect(dedup(articles)).toHaveLength(1);
   });
 
@@ -70,6 +68,18 @@ describe("dedup", () => {
       makeArticle("https://example.com/post-2"),
     ];
     expect(dedup(articles)).toHaveLength(2);
+  });
+
+  it("preserves semantic query parameters and case-sensitive paths", () => {
+    expect(
+      dedup([
+        makeArticle("https://news.ycombinator.com/item?id=1"),
+        makeArticle("https://news.ycombinator.com/item?id=2"),
+      ])
+    ).toHaveLength(2);
+    expect(
+      dedup([makeArticle("https://example.com/Post"), makeArticle("https://example.com/post")])
+    ).toHaveLength(2);
   });
 
   it("handles empty array", () => {
