@@ -1,5 +1,9 @@
 # Reliability and summary quality
 
+The selected automatic cloud collection/enrichment/brief path and current adoption
+requirements are documented in [Cloud brief](cloud-brief.md). The manual commands below
+remain available for inspection and optional operations.
+
 This change is based on `2b38902` (the default `develop` branch at checkout).
 No live collector, Notion mutation, Slack message, workflow dispatch, deployment,
 permission change, or model/service change was performed during development.
@@ -191,16 +195,11 @@ outbox provides replay protection; losing it or intentionally creating a second 
 can duplicate delivery. Exactly-once delivery is not claimed. Stored summaries in the
 prepared batch are labelled unverified and should be reviewed before posting.
 
-Before adoption choose one of these migration policies:
-
-1. Keep raw collection/enrichment automatic and use the explicit optional commands.
-   This is the behavior currently implemented; no automatic delivery is retained.
-2. Preserve automatic Slack/reaction behavior via separate jobs with the outbox and a
-   durable delivery-state handoff. This needs a follow-up reviewed workflow change;
-   setting the current secrets or a nonexistent feature flag is insufficient.
-3. Also preserve automatic Notion full translation. This requires a separate bounded
-   translation queue and owned-block replacement/reconciliation, rather than restoring
-   the unsafe append-only writer. It is not implemented by the local translation CLI.
+The selected policy is now automatic collection/enrichment/brief output in Actions,
+with parent-side chat delivery configured separately after a successful retrieval test.
+The optional Slack workflow preserves manual cloud use, with no schedule and an explicit
+execution flag. Full Notion translation remains optional follow-up work; the unsafe
+append-only writer is not reconnected. See [Cloud brief](cloud-brief.md) for these defaults.
 
 Independent review identified the Japanese-Summary regression, missing fallback source
 links for reaction sync, and ambiguous Slack responses incorrectly classed as retryable.
@@ -210,8 +209,8 @@ feature removal requested by the user.
 
 ## Offline verification and review
 
-Local validation passed: 21 Vitest files / 158 tests, TypeScript, Biome, Markdown lint,
-`actionlint` for all three pipeline workflows, YAML parsing and `git diff --check`.
+Local validation passed: 25 Vitest files / 175 tests, TypeScript, Biome, Markdown lint,
+`actionlint` for the pipeline and optional Slack workflows, YAML parsing and `git diff --check`.
 The digest dry run and fixture brief also completed without API calls. The installed
 `actionlint` binary was invoked directly to avoid changing the local mise trust setting.
 

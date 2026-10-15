@@ -25,7 +25,10 @@
     "recover:enrichment": "node --no-deprecation --import tsx src/enrichment/recover-main.ts",
     "optional:slack": "node --no-deprecation --import tsx src/optional/slack-main.ts",
     "optional:translate": "node --no-deprecation --import tsx src/optional/translate-main.ts",
-    "optional:reactions": "node --no-deprecation --import tsx src/optional/reactions-main.ts"
+    "optional:reactions": "node --no-deprecation --import tsx src/optional/reactions-main.ts",
+    "checkpoint": "node --no-deprecation --import tsx src/runtime/checkpoint-main.ts",
+    "brief:build": "node --no-deprecation --import tsx src/brief/build-main.ts",
+    "brief:verify": "node --no-deprecation --import tsx src/brief/verify-main.ts"
   },
   "dependencies": {
     "@notionhq/client": "^2.2.15",

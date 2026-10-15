@@ -4,6 +4,11 @@ name: Publish site
 # workflow is what GitHub kept auto-disabling for inactivity (see collect.yml).
 on:
   workflow_call:
+    inputs:
+      brief_artifact:
+        type: string
+        default: ""
+        required: false
   workflow_dispatch:
 
 jobs:
@@ -35,6 +40,14 @@ jobs:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: npm run export:web
+
+      # Existing gated host only. No new public host or bypass of the Worker gate.
+      - name: Include same-run brief inside the existing site gate
+        if: ${{ inputs.brief_artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.brief_artifact }}
+          path: web/public/brief
 
       - name: Install site dependencies
         working-directory: web

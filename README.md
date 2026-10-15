@@ -21,7 +21,12 @@ digest (10 articles / 12-minute processing budget; 20-minute job timeout)
   Replace Summary and the owned processing block; preserve user Status
   Stop the run at the first 429; retry transient failures in later runs (max 3)
 
+brief
+  Read bounded recent Notion candidates → source-linked JSON/Markdown + provenance manifest
+  Emit explicit diagnostic output on failure; never reuse stale news
+
 publish
+  Include the same brief under the existing site gate
   Export saved Notion properties → Astro build → existing optional deployment
   May proceed when collection is partial or enrichment fails
 ```
@@ -31,6 +36,10 @@ proposed pipeline. Explicit optional commands preserve manual use; scheduled ent
 points do not call them.
 This prevents raw saves and publication from depending on model waits or a partially
 posted Slack thread. No new delivery integration is enabled.
+
+The selected cloud path now also builds a timestamped three-item brief artifact and
+optionally includes it in the existing gated site. See [Cloud brief and adoption](docs/cloud-brief.md)
+for the output contract, recovery, real retrieval options and the parent-side trial.
 
 See [Reliability and recovery](docs/reliability.md) for processing states, checkpoint
 recovery, behavior changes, limitations, and offline review commands.

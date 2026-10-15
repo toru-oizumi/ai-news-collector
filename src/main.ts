@@ -6,6 +6,7 @@ import { enqueuePage } from "./enrichment/backlog.js";
 import { pushOneToNotion } from "./notion/client.js";
 import { dedup, normalizeForDedup } from "./pipeline/dedup.js";
 import { scoreAndFilter } from "./pipeline/scorer.js";
+import { type StageReport, runReported } from "./runtime/reports.js";
 import { anthropicFetcher } from "./sources/anthropic-scraper.js";
 import { githubTrendingFetcher } from "./sources/github-trending.js";
 import { hackerNewsFetcher } from "./sources/hackernews.js";
@@ -15,7 +16,7 @@ import { qiitaFetcher } from "./sources/qiita.js";
 import { createRSSFetcher } from "./sources/rss-fetcher.js";
 import type { Article, Fetcher } from "./types.js";
 
-async function main() {
+async function main(report?: StageReport) {
   const startTime = Date.now();
   console.log("=== AI News Collector ===");
   console.log(`Time: ${new Date().toISOString()}`);
@@ -51,6 +52,7 @@ async function main() {
 
   const allArticles = fetchResults.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
   console.log(`\n  Total fetched: ${allArticles.length}`);
+  if (report) report.stats.fetched = allArticles.length;
 
   // ── Step 2: Deduplicate ──
   console.log("\n[2/4] Deduplicating...");
@@ -101,6 +103,12 @@ async function main() {
     await appendFile(process.env.GITHUB_OUTPUT, `ready=${snapshotReady || result.pending === 0}\n`);
   }
   console.log(`Confirmed saved: ${result.saved + result.existing}, pending: ${result.pending}`);
+  if (report)
+    report.stats = {
+      ...report.stats,
+      confirmed: result.saved + result.existing,
+      pending: result.pending,
+    };
   if (result.pending > 0) {
     console.warn(
       `::warning::Collection incomplete: ${result.pending} pending; checkpoint retained for replay.`
@@ -114,7 +122,7 @@ async function main() {
   console.log(`\n=== Done in ${elapsed}s ===`);
 }
 
-main()
+(env.DRY_RUN ? main() : runReported("collect", main))
   // Force a clean exit on success. `npm run collect` runs via tsx (esbuild
   // service), which leaves an open handle that keeps the event loop alive
   // after main() resolves — without this the process hangs until the CI job

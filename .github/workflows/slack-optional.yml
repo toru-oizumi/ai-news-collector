@@ -1,0 +1,186 @@
+name: Optional Slack Operations
+
+# No schedule, and never required by collection/enrichment/brief publication.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [prepare, deliver, reactions]
+        default: prepare
+      execute:
+        description: "Explicitly authorize the selected Slack/Notion writes for this run"
+        type: boolean
+        default: false
+      source_run_id:
+        description: "Run containing the brief, reviewed outbox, or latest delivery result"
+        type: number
+        default: 0
+      source_artifact:
+        description: "Exact artifact name from that run"
+        type: string
+        default: ""
+
+concurrency:
+  group: ai-news-optional-slack
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: ${{ inputs.operation == 'prepare' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.source_run_id }}
+          name: ${{ inputs.source_artifact }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: slack-input
+      - name: Read newest collection run from GitHub
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (!context.ref.startsWith('refs/heads/')) throw new Error('A branch ref is required');
+            const branch = context.ref.slice('refs/heads/'.length);
+            const response = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'collect.yml', branch, per_page: 1
+            });
+            const latest = response.data.workflow_runs[0];
+            if (!latest || latest.head_branch !== branch) throw new Error('No newest collection run');
+            require('fs').writeFileSync('latest-collect.json', JSON.stringify({
+              run: { repository: `${context.repo.owner}/${context.repo.repo}`, ref: context.ref,
+                sha: latest.head_sha, runId: String(latest.id), attempt: latest.run_attempt,
+                url: latest.html_url }, status: latest.status, conclusion: latest.conclusion
+            }));
+      - name: Prepare source-linked outbox without posting
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+        run: node --import tsx src/optional/cloud-main.ts prepare slack-input
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-slack-${{ github.run_id }}
+          path: slack-output/
+          retention-days: 30
+
+  deliver:
+    if: ${{ inputs.operation == 'deliver' && inputs.execute == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.source_run_id }}
+          name: ${{ inputs.source_artifact }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: slack-output
+      - name: Read newest collection run from GitHub
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (!context.ref.startsWith('refs/heads/')) throw new Error('A branch ref is required');
+            const branch = context.ref.slice('refs/heads/'.length);
+            const response = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'collect.yml', branch, per_page: 1
+            });
+            const latest = response.data.workflow_runs[0];
+            if (!latest || latest.head_branch !== branch) throw new Error('No newest collection run');
+            require('fs').writeFileSync('latest-collect.json', JSON.stringify({
+              run: { repository: `${context.repo.owner}/${context.repo.repo}`, ref: context.ref,
+                sha: latest.head_sha, runId: String(latest.id), attempt: latest.run_attempt,
+                url: latest.html_url }, status: latest.status, conclusion: latest.conclusion
+            }));
+      - name: Validate reviewed source, channel and expiry
+        id: validate
+        env:
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+        run: node --import tsx src/optional/cloud-main.ts validate slack-output
+      - name: Refuse replay from an older or original prepared ledger
+        uses: actions/github-script@v7
+        env:
+          BATCH: ${{ steps.validate.outputs.batch }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_ARTIFACT: ${{ inputs.source_artifact }}
+        with:
+          script: |
+            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+              ...context.repo, per_page: 100
+            });
+            require('fs').writeFileSync('slack-artifacts.json', JSON.stringify(artifacts));
+      - name: Verify latest delivery ledger without sending
+        env:
+          BATCH: ${{ steps.validate.outputs.batch }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_ARTIFACT: ${{ inputs.source_artifact }}
+        run: node --import tsx src/optional/replay-main.ts
+      # A durable intent exists before any Slack side effect, independently of cache.
+      - uses: actions/upload-artifact@v4
+        id: intent
+        with:
+          name: slack-intent-${{ steps.validate.outputs.batch }}-${{ github.run_attempt }}
+          path: slack-output/
+          retention-days: 30
+      - name: Read newest collection run from GitHub
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (!context.ref.startsWith('refs/heads/')) throw new Error('A branch ref is required');
+            const branch = context.ref.slice('refs/heads/'.length);
+            const response = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'collect.yml', branch, per_page: 1
+            });
+            const latest = response.data.workflow_runs[0];
+            if (!latest || latest.head_branch !== branch) throw new Error('No newest collection run');
+            require('fs').writeFileSync('latest-collect.json', JSON.stringify({
+              run: { repository: `${context.repo.owner}/${context.repo.repo}`, ref: context.ref,
+                sha: latest.head_sha, runId: String(latest.id), attempt: latest.run_attempt,
+                url: latest.html_url }, status: latest.status, conclusion: latest.conclusion
+            }));
+      - name: Recheck newest run immediately before posting
+        env:
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+        run: node --import tsx src/optional/cloud-main.ts validate slack-output
+      - name: Deliver explicitly approved outbox
+        if: ${{ steps.intent.outcome == 'success' }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+        run: npm run optional:slack -- deliver slack-output/outbox.json --execute
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.intent.outcome == 'success' }}
+        with:
+          name: slack-result-${{ steps.validate.outputs.batch }}-${{ github.run_attempt }}
+          path: slack-output/
+          retention-days: 30
+
+  reactions:
+    if: ${{ inputs.operation == 'reactions' && inputs.execute == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+      - run: npm ci
+      - name: Sync explicitly approved reactions
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: npm run optional:reactions -- --execute

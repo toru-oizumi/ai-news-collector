@@ -7,8 +7,9 @@ import { loadRow, persistSummary } from "./enrichment/notion-store.js";
 import { enrichOne } from "./enrichment/processor.js";
 import { runEnrichment } from "./enrichment/runner.js";
 import { processingBlock } from "./enrichment/state.js";
+import { type StageReport, runReported } from "./runtime/reports.js";
 
-async function main(): Promise<void> {
+async function main(report?: StageReport): Promise<void> {
   if (env.DRY_RUN) {
     console.log("[DRY RUN] No API calls. Would enrich at most 10 saved pages within 12 minutes.");
     return;
@@ -41,6 +42,12 @@ async function main(): Promise<void> {
       checkpoint: saveBacklog,
       wait: () => new Promise((resolve) => setTimeout(resolve, MISTRAL_CONFIG.delayMs)),
     });
+    if (report)
+      report.stats = {
+        processed: result.processed,
+        pending: result.pending,
+        failed: result.failed,
+      };
     console.log(`Enrichment: ${result.processed} processed; ${result.pending} pending`);
     if (result.failed) throw new Error("Enrichment persistence unavailable");
   } finally {
@@ -48,7 +55,7 @@ async function main(): Promise<void> {
   }
 }
 
-main()
+(env.DRY_RUN ? main() : runReported("enrich", main))
   .then(() => process.exit(0))
   .catch(() => {
     console.error("Enrichment failed; checkpoint retained");

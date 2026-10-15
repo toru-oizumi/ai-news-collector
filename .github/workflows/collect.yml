@@ -4,6 +4,19 @@ on:
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: "Explicitly start a new queue when no checkpoint exists (first adoption only)"
+        type: boolean
+        default: false
+      recovery_run_id:
+        description: "Existing run containing the complete checkpoint artifact"
+        type: number
+        default: 0
+      recovery_artifact:
+        description: "Exact collection/enrichment checkpoint artifact name to restore"
+        type: string
+        default: ""
 
 # Serialise collectors: Notion has no unique URL constraint. Do not cancel an
 # in-flight save or overwrite its checkpoint with a newer concurrent run.
@@ -28,23 +41,47 @@ jobs:
           cache: "npm"
       - run: npm ci
       - uses: actions/cache/restore@v4
+        id: state
         with:
           path: .runtime
           key: pipeline-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}-collect
           restore-keys: pipeline-${{ github.ref_name }}-
+      - name: Require recovery after cache loss
+        if: ${{ steps.state.outputs.cache-matched-key == '' && inputs.recovery_artifact == '' && inputs.bootstrap != true }}
+        run: |
+          echo "::error::No queue checkpoint. Restore an artifact, or explicitly bootstrap the first adoption. Refusing silent queue/ledger loss."
+          exit 1
+      - name: Clear stale cache before explicit recovery
+        if: ${{ inputs.recovery_artifact != '' }}
+        run: rm -rf .runtime
+      - name: Restore approved existing recovery artifact
+        if: ${{ inputs.recovery_artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.recovery_artifact }}
+          run-id: ${{ inputs.recovery_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: .runtime
+      - name: Validate restored checkpoint
+        if: ${{ steps.state.outputs.cache-matched-key != '' || inputs.recovery_artifact != '' }}
+        run: npm run checkpoint -- validate
       - name: Save raw articles (no Mistral or Slack calls)
         id: collect
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: npm run collect
+      - name: Seal recoverable checkpoint
+        id: seal
+        if: ${{ always() && steps.collect.outcome != 'skipped' }}
+        run: npm run checkpoint -- seal
       - uses: actions/cache/save@v4
-        if: always()
+        if: ${{ always() && steps.seal.outcome == 'success' }}
         with:
           path: .runtime
           key: pipeline-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}-collect
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && steps.seal.outcome == 'success' }}
         with:
           name: collection-checkpoint-${{ github.run_attempt }}
           path: .runtime/*.json
@@ -59,9 +96,56 @@ jobs:
       checkpoint_artifact: collection-checkpoint-${{ github.run_attempt }}
     secrets: inherit
 
-  publish:
+  brief:
     needs: [collect, digest]
-    # A failed enrichment must not suppress a snapshot of already saved articles.
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: collection-checkpoint-${{ github.run_attempt }}
+          path: .runtime
+      - uses: actions/download-artifact@v4
+        if: ${{ needs.digest.result != 'skipped' }}
+        continue-on-error: true
+        with:
+          name: enrichment-checkpoint-${{ github.run_attempt }}
+          path: .runtime
+      - name: Validate source checkpoint
+        id: validate
+        continue-on-error: true
+        run: npm run checkpoint -- validate
+      - name: Build source-linked brief or explicit failure report
+        id: brief
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          CHECKPOINT_VALID: ${{ steps.validate.outcome == 'success' }}
+          COLLECTION_READY: ${{ needs.collect.outputs.ready }}
+          COLLECTION_RESULT: ${{ needs.collect.result }}
+          ENRICHMENT_RESULT: ${{ needs.digest.result }}
+        run: npm run brief:build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-news-brief-${{ github.run_attempt }}
+          path: brief-output/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: [collect, digest, brief]
+    # Publish diagnostic briefs too; expired previous output must not masquerade as current.
     if: ${{ !cancelled() && needs.collect.outputs.ready == 'true' }}
     uses: ./.github/workflows/publish.yml
+    with:
+      brief_artifact: ai-news-brief-${{ github.run_attempt }}
     secrets: inherit

@@ -7,3 +7,10 @@ dist/
 .serena
 
 .runtime/
+
+brief-output/
+web/public/brief/
+slack-input/
+slack-output/
+latest-collect.json
+slack-artifacts.json

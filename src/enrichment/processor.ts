@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { MISTRAL_CONFIG } from "../config.js";
 import { evidenceStatus, parseGroundedSummary } from "./grounding.js";
 import type { ProcessingState } from "./state.js";
@@ -58,6 +59,7 @@ export async function enrichOne(
           state.evidence = parsed.evidence;
           state.input = "article_body";
           state.model = MISTRAL_CONFIG.model;
+          state.summaryHash = createHash("sha256").update(summary).digest("hex");
           state.nextAttemptAt = undefined;
         }
       }
@@ -70,6 +72,7 @@ export async function enrichOne(
   }
   // Summary update happens first, then the state block. Replays overwrite the same
   // properties/block; they never append duplicate digests or overwrite reading Status.
+  state.updatedAt = new Date(now()).toISOString();
   await deps.persist(row, state, summary);
   return { rateLimited: state.status === "rate_limited", apiCalled, state };
 }

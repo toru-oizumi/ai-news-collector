@@ -24,11 +24,14 @@ export interface ProcessingState {
   evidence?: string[];
   input?: "article_body";
   model?: string;
+  collectedAt?: string;
+  summaryHash?: string;
 }
 
 export function initialState(article: Article): ProcessingState {
   return {
     marker: STATE_MARKER,
+    collectedAt: article.fetchedAt.toISOString(),
     status:
       article.lang === "ja"
         ? article.abstract.trim()

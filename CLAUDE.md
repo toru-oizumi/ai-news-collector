@@ -3,7 +3,7 @@
 ## Project Overview
 
 AI/ML ニュースを各種ソースから自動収集し Notion Database に蓄積するツール。
-GitHub Actions で 6 時間ごとに収集する。運用と復旧手順は [docs/reliability.md](docs/reliability.md) を参照する。
+GitHub Actions で 6 時間ごとに収集する。クラウド brief と導入手順は [docs/cloud-brief.md](docs/cloud-brief.md)、収集の復旧手順は [docs/reliability.md](docs/reliability.md) を参照する。
 
 ### 技術スタック
 
