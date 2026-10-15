@@ -15,6 +15,7 @@ export interface BriefCandidate {
   evidence: string[];
   summaryRecordedAt?: string;
   model?: string;
+  summaryHash?: string;
 }
 export interface BriefBundle {
   schemaVersion: 1;
@@ -29,8 +30,17 @@ export interface BriefBundle {
   sourceReadAt: string | null;
   articles: BriefCandidate[];
   qualityNote: string;
-  selection: { candidateLimit: number; maxArticles: number; sourceLimited: boolean };
+  selection: {
+    policy: "grounded_recent_v1";
+    candidateLimit: number;
+    scannedCandidates: number;
+    maxArticles: number;
+    sourceLimited: boolean;
+  };
+  delivery: { attempted: false; history: "not_checked" };
 }
+export const CANDIDATE_SCAN_LIMIT = 48;
+export const SELECTION_POLICY = "grounded_recent_v1";
 export const MAX_BRIEF_AGE_MS = 8 * 60 * 60_000;
 export const MAX_PUBLISHED_AGE_MS = 7 * 24 * 60 * 60_000;
 export const MAX_ARTICLE_AGE_MS = 24 * 60 * 60_000;
@@ -41,6 +51,41 @@ export const sameRun = (a: RunIdentity, b: RunIdentity) =>
   a.runId === b.runId &&
   a.attempt === b.attempt &&
   a.sha === b.sha;
+
+/** Formal provenance checks only; quotations do not prove semantic accuracy. */
+export function hasGroundedSummary(article: BriefCandidate, now: number): boolean {
+  const recorded = Date.parse(article.summaryRecordedAt ?? "");
+  return (
+    article.summaryKind === "source_quoted" &&
+    article.summary.trim().length >= 30 &&
+    article.summary.length <= 500 &&
+    article.summaryHash === digest(article.summary) &&
+    Number.isFinite(recorded) &&
+    recorded <= now + 60_000 &&
+    Array.isArray(article.evidence) &&
+    article.evidence.length >= 1 &&
+    article.evidence.length <= 5 &&
+    article.evidence.every((quote) => typeof quote === "string" && quote.trim().length >= 20)
+  );
+}
+
+export function isFreshArticle(article: BriefCandidate, now: number): boolean {
+  const collected = Date.parse(article.collectedAt);
+  const published = Date.parse(article.publishedAt ?? "");
+  return (
+    Number.isFinite(collected) &&
+    collected <= now + 60_000 &&
+    now - collected < MAX_ARTICLE_AGE_MS &&
+    Number.isFinite(published) &&
+    published <= now + 60_000 &&
+    now - published < MAX_PUBLISHED_AGE_MS
+  );
+}
+
+export const compareFreshness = (a: BriefCandidate, b: BriefCandidate): number =>
+  Date.parse(b.publishedAt ?? "") - Date.parse(a.publishedAt ?? "") ||
+  Date.parse(b.collectedAt) - Date.parse(a.collectedAt) ||
+  b.score - a.score;
 
 export function buildBundle(input: {
   run: RunIdentity;
@@ -54,6 +99,7 @@ export function buildBundle(input: {
   sourceReadAt: string | null;
   readFailed?: boolean;
   sourceLimited?: boolean;
+  sourceScanned?: number;
 }): BriefBundle {
   const { now, run } = input;
   const reasons: string[] = [];
@@ -99,23 +145,15 @@ export function buildBundle(input: {
       ? []
       : [...input.candidates]
           .filter((a) => {
-            const collected = Date.parse(a.collectedAt);
-            const published = a.publishedAt ? Date.parse(a.publishedAt) : null;
             return (
-              Number.isFinite(collected) &&
-              collected <= now + 60_000 &&
-              now - collected < MAX_ARTICLE_AGE_MS &&
-              (!a.publishedAt ||
-                (published !== null &&
-                  Number.isFinite(published) &&
-                  published <= now + 60_000 &&
-                  now - published < MAX_PUBLISHED_AGE_MS)) &&
+              isFreshArticle(a, now) &&
+              hasGroundedSummary(a, now) &&
               /^https?:\/\//.test(a.url) &&
               a.title.trim() &&
               a.source.trim()
             );
           })
-          .sort((a, b) => b.score - a.score || b.collectedAt.localeCompare(a.collectedAt))
+          .sort(compareFreshness)
           .filter((a) => {
             const key = normalizeForDedup(a.url);
             if (seen.has(key)) return false;
@@ -126,8 +164,10 @@ export function buildBundle(input: {
           .map((a) => ({
             ...a,
             id: digest(normalizeForDedup(a.url)),
-            summary: a.summary.slice(0, 500),
+            summary: a.summary,
           }));
+  if (!blocked && Number(report?.stats.fetched ?? 0) > 0 && !articles.length)
+    reasons.push("no_grounded_recent_articles");
   const status = blocked
     ? "unavailable"
     : !articles.length
@@ -144,7 +184,14 @@ export function buildBundle(input: {
   );
   return {
     schemaVersion: 1,
-    selection: { candidateLimit: 12, maxArticles: 3, sourceLimited: input.sourceLimited ?? false },
+    selection: {
+      policy: SELECTION_POLICY,
+      candidateLimit: CANDIDATE_SCAN_LIMIT,
+      scannedCandidates: input.sourceScanned ?? input.candidates.length,
+      maxArticles: 3,
+      sourceLimited: input.sourceLimited ?? false,
+    },
+    delivery: { attempted: false, history: "not_checked" },
     generatedAt: new Date(now).toISOString(),
     validUntil: new Date(expiry).toISOString(),
     run,
@@ -156,7 +203,7 @@ export function buildBundle(input: {
     sourceReadAt: input.sourceReadAt,
     articles,
     qualityNote:
-      "自動要約は出典引用との形式照合のみ。意味の正確性は未検証です。抜粋・要約なしを区別しています。",
+      "本文引用・要約ハッシュを確認した自動要約のみ。意味の正確性は未検証です。生成のみで、配信履歴は照合していません。",
   };
 }
 
@@ -165,6 +212,7 @@ export function buildBundle(input: {
 export function assertDeliverable(bundle: BriefBundle, expected: RunIdentity, now: number): void {
   if (
     bundle.schemaVersion !== 1 ||
+    bundle.selection?.policy !== SELECTION_POLICY ||
     !sameRun(bundle.run, expected) ||
     !bundle.deliveryAllowed ||
     !["ok", "partial"].includes(bundle.status) ||
@@ -184,21 +232,15 @@ export function assertDeliverable(bundle: BriefBundle, expected: RunIdentity, no
   )
     throw new Error("Brief is expired or has invalid timestamps");
   for (const article of bundle.articles) {
-    const collected = Date.parse(article.collectedAt);
-    const published = article.publishedAt ? Date.parse(article.publishedAt) : null;
     if (
-      !Number.isFinite(collected) ||
-      collected > now + 60_000 ||
-      now - collected >= MAX_ARTICLE_AGE_MS ||
-      (article.publishedAt !== null &&
-        (published === null ||
-          !Number.isFinite(published) ||
-          published > now + 60_000 ||
-          now - published >= MAX_PUBLISHED_AGE_MS)) ||
+      !hasGroundedSummary(article, now) ||
+      !isFreshArticle(article, now) ||
       !/^https?:\/\//.test(article.url) ||
+      !article.title.trim() ||
+      !article.source.trim() ||
       article.id !== digest(normalizeForDedup(article.url))
     )
-      throw new Error("Brief contains stale or invalid article data");
+      throw new Error("Brief contains stale, ungrounded or invalid article data");
   }
 }
 export function renderBundle(bundle: BriefBundle): string {

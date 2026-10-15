@@ -101,8 +101,9 @@ only: the six-hour delay, three-attempt limit and immediate stop on 429 are unch
 Diagnostics replace the previous attempt's failure; successful recovery clears it.
 
 The enrichment queue keeps its existing FIFO order in this change. Fresh raw saves
-can therefore reach the brief without waiting for a model, but fresh AI summaries may
-still wait behind managed enrichment backlog. Old/unmanaged pages are not migrated.
+remain browsable without waiting for a model. Automatic chat briefs now require a
+body-grounded summary; titles and unverified feed excerpts cannot fill their slots.
+Fresh AI summaries may still wait behind managed enrichment backlog. Old/unmanaged pages are not migrated.
 
 A run handles at most ten eligible pages within a twelve-minute processing budget.
 It reserves an attempt in the page block before generating content. An interrupted run
@@ -234,7 +235,7 @@ feature removal requested by the user.
 
 ## Offline verification and review
 
-Local validation passed: 26 Vitest files / 196 tests, TypeScript, Biome, Markdown lint,
+Local validation passed: 26 Vitest files / 212 tests, TypeScript, Biome, Markdown lint,
 `actionlint` for the pipeline and optional Slack workflows, YAML parsing and `git diff --check`.
 The digest dry run and fixture brief also completed without API calls. The installed
 `actionlint` binary was invoked directly to avoid changing the local mise trust setting.
