@@ -2,7 +2,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { preparePending } from "../../collection/priority.js";
 import type { RunIdentity, StageReport } from "../../runtime/reports.js";
+import type { Article } from "../../types.js";
 import {
   type BriefCandidate,
   MAX_ARTICLE_AGE_MS,
@@ -207,4 +209,40 @@ it("rejects an older successful bundle after a newer failed or cancelled workflo
   expect(() =>
     requireCompletedLatest({ run: newer, status: "in_progress", conclusion: null })
   ).toThrow();
+});
+
+it("does not fill a brief with old backlog or refresh rediscovered collection timestamps", () => {
+  const raw = (n: number, publishedDays: number, collectedDays: number): Article => ({
+    title: `AI article ${n}`,
+    url: `https://example.com/${n}`,
+    source: "OpenAI",
+    category: [],
+    score: 100,
+    summary: "",
+    abstract: "",
+    lang: "en",
+    publishedAt: new Date(now - publishedDays * 86_400_000),
+    fetchedAt: new Date(now - collectedDays * 86_400_000),
+  });
+  const old = raw(2, 30, 0);
+  const rediscovered = raw(3, 3, 2);
+  const prepared = preparePending(
+    [old, rediscovered],
+    [raw(1, 0, 0), { ...raw(3, 3, 0), score: 999 }, { ...raw(2, 0, 0), score: 999 }],
+    new Set(),
+    now
+  );
+  const bundle = buildBundle({
+    ...input(),
+    candidates: prepared.map((a) => ({
+      ...article(Number(a.url.split("/").pop())),
+      collectedAt: a.fetchedAt.toISOString(),
+      publishedAt: a.publishedAt?.toISOString() ?? null,
+      summary: "",
+      summaryKind: "none",
+      evidence: [],
+    })),
+  });
+  expect(bundle.articles.map((a) => a.title)).toEqual(["AI article 1"]);
+  expect(bundle.articles).toHaveLength(1); // fewer than three is preferable to padded old news
 });

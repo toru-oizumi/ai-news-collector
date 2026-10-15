@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { MISTRAL_CONFIG } from "../config.js";
+import { type BodyFetchResult, MistralRequestError } from "../digest/failures.js";
 import { evidenceStatus, parseGroundedSummary } from "./grounding.js";
 import type { ProcessingState } from "./state.js";
 
@@ -22,7 +23,7 @@ If the body is unrelated to AI/ML or lacks evidence, return {"relevant":false}.`
 export async function enrichOne(
   row: EnrichmentRow,
   deps: {
-    fetchBody: (url: string) => Promise<string[]>;
+    fetchBody: (url: string) => Promise<BodyFetchResult>;
     generate: (system: string, user: string, maxTokens: number) => Promise<{ text: string }>;
     persist: (row: EnrichmentRow, state: ProcessingState, summary: string) => Promise<void>;
     now?: () => number;
@@ -34,13 +35,17 @@ export async function enrichOne(
     attempts: row.state.attempts + 1,
     updatedAt: new Date(now()).toISOString(),
     nextAttemptAt: new Date(now() + 6 * 60 * 60_000).toISOString(),
+    failure: undefined,
   };
   let summary = "";
   let apiCalled = false;
   try {
-    const paragraphs = await deps.fetchBody(row.url);
-    if (paragraphs.length === 0) state.status = "body_unavailable";
-    else {
+    const result = await deps.fetchBody(row.url);
+    const paragraphs = result.paragraphs;
+    if (paragraphs.length === 0) {
+      state.status = "body_unavailable";
+      state.failure = result.failure;
+    } else {
       const body = paragraphs.join("\n\n").slice(0, 6000);
       const rejected = evidenceStatus(row.title, [body]);
       if (rejected) state.status = rejected;
@@ -65,10 +70,8 @@ export async function enrichOne(
       }
     }
   } catch (error) {
-    state.status =
-      error instanceof Error && error.message === "Mistral HTTP 429"
-        ? "rate_limited"
-        : "model_failed";
+    state.failure = error instanceof MistralRequestError ? error.diagnostic : undefined;
+    state.status = state.failure?.httpStatus === 429 ? "rate_limited" : "model_failed";
   }
   // Summary update happens first, then the state block. Replays overwrite the same
   // properties/block; they never append duplicate digests or overwrite reading Status.

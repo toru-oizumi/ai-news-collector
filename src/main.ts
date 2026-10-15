@@ -1,10 +1,11 @@
 import { appendFile } from "node:fs/promises";
 import { confirmSaved, loadConfirmed } from "./collection/confirmed.js";
+import { preparePending } from "./collection/priority.js";
 import { collectPending, loadPending, savePending } from "./collection/queue.js";
 import { JP_RSS_SOURCES, RSS_SOURCES, env } from "./config.js";
 import { enqueuePage } from "./enrichment/backlog.js";
 import { pushOneToNotion } from "./notion/client.js";
-import { dedup, normalizeForDedup } from "./pipeline/dedup.js";
+import { dedup } from "./pipeline/dedup.js";
 import { scoreAndFilter } from "./pipeline/scorer.js";
 import { type StageReport, runReported } from "./runtime/reports.js";
 import { anthropicFetcher } from "./sources/anthropic-scraper.js";
@@ -76,9 +77,7 @@ async function main(report?: StageReport) {
   // drops raw collection results; unsuccessful saves remain in the local queue.
   console.log("\n[4/4] Saving raw articles with checkpoints...");
   const confirmed = await loadConfirmed();
-  const pending = dedup([...(await loadPending()), ...articles]).filter(
-    (article) => !confirmed.has(normalizeForDedup(article.url))
-  );
+  const pending = preparePending(await loadPending(), articles, confirmed, Date.now());
   await savePending(pending);
   // Each save performs a bounded URL lookup and fails closed on lookup failure.
   let snapshotReady = false;

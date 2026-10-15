@@ -1,4 +1,5 @@
 import type { BlockObjectRequest } from "@notionhq/client/build/src/api-endpoints.js";
+import type { BodyFailure, ModelFailure } from "../digest/failures.js";
 import type { Article } from "../types.js";
 
 export const STATE_MARKER = "ai-news-processing:v1";
@@ -26,6 +27,7 @@ export interface ProcessingState {
   model?: string;
   collectedAt?: string;
   summaryHash?: string;
+  failure?: BodyFailure | ModelFailure;
 }
 
 export function initialState(article: Article): ProcessingState {

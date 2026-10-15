@@ -1,6 +1,6 @@
 import { Client } from "@notionhq/client";
 import { MISTRAL_CONFIG, env } from "./config.js";
-import { closeBrowser, fetchArticleBody } from "./digest/fetcher.js";
+import { closeBrowser, fetchArticle } from "./digest/fetcher.js";
 import { callMistral } from "./digest/mistral-client.js";
 import { loadBacklog, saveBacklog } from "./enrichment/backlog.js";
 import { loadRow, persistSummary } from "./enrichment/notion-store.js";
@@ -35,7 +35,7 @@ async function main(report?: StageReport): Promise<void> {
       },
       process: (row) =>
         enrichOne(row, {
-          fetchBody: fetchArticleBody,
+          fetchBody: fetchArticle,
           generate: callMistral,
           persist: (item, state, summary) => persistSummary(notion, item, state, summary),
         }),
