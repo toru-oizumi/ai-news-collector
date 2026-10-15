@@ -1,54 +1,72 @@
-name: Generate Digests and Translations
+name: Generate Grounded Summaries
 
-# Triggered as a dependent job by the Collect workflow (workflow_call), so it
-# no longer owns a `schedule` trigger. A standalone scheduled workflow was being
-# auto-disabled by GitHub for inactivity (disabled_inactivity), silently stopping
-# digest generation. Chaining it off collect means only one scheduled workflow
-# exists, which can't be independently disabled. `workflow_dispatch` is kept for
-# manual runs / backfills.
 on:
   workflow_call:
+    inputs:
+      checkpoint_artifact:
+        type: string
+        default: ""
+        required: false
   workflow_dispatch:
 
 jobs:
   digest:
     runs-on: ubuntu-latest
-    # The digest loop is sequential and rate-limited (Mistral 2 RPM → ~62s/article for
-    # digest + translation), and it clears a backlog of Unread articles. Public repo,
-    # so Actions minutes are free — give it headroom beyond the collect job's 45 min.
-    timeout-minutes: 60
-
+    timeout-minutes: 20
+    concurrency:
+      group: ai-news-state-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      # Cache the browser download so it isn't refetched every run (~167MB) — this also
-      # shrinks the surface for the flaky/hung CDN download that once ate the whole job.
+      - run: npm ci
+      - uses: actions/cache/restore@v4
+        with:
+          path: .runtime
+          key: pipeline-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}-digest
+          restore-keys: pipeline-${{ github.ref_name }}-
+      # Same-run handoff uses the collector artifact, never an older cache entry.
+      - uses: actions/download-artifact@v4
+        id: handoff
+        if: ${{ inputs.checkpoint_artifact != '' }}
+        with:
+          name: ${{ inputs.checkpoint_artifact }}
+          path: .runtime
+      - name: Validate restored queue before enrichment
+        run: npm run checkpoint -- validate
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-
-      # A headless browser is only needed for openai.com bodies; every other source uses
-      # cheerio, and fetcher.ts returns [] when the browser can't launch. So keep this step
-      # time-boxed and non-fatal: if the install hangs or fails, digest still runs and only
-      # OpenAI bodies degrade to empty — it can no longer cancel the entire job (TOR-70).
+      # Missing Chromium becomes body_unavailable, never a title-only summary.
       - name: Install Playwright Chromium
-        timeout-minutes: 10
+        timeout-minutes: 3
         continue-on-error: true
         run: npx playwright install chromium --with-deps
-
-      - name: Generate digests and translations
+      - name: Enrich saved pages (10 articles / 12 minutes maximum)
+        id: enrich
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
         run: npm run digest
+      - name: Seal recoverable checkpoint
+        id: seal
+        if: ${{ always() && steps.enrich.outcome != 'skipped' }}
+        run: npm run checkpoint -- seal
+      - uses: actions/cache/save@v4
+        if: ${{ always() && steps.seal.outcome == 'success' }}
+        with:
+          path: .runtime
+          key: pipeline-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}-digest
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.seal.outcome == 'success' }}
+        with:
+          name: enrichment-checkpoint-${{ github.run_attempt }}
+          path: .runtime/*.json
+          include-hidden-files: true
+          retention-days: 30

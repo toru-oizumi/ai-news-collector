@@ -4,7 +4,9 @@ import type { Article } from "../types.js";
 /** A Slack Block Kit block. Loosely typed — we only build a few known shapes. */
 export type SlackBlock = Record<string, unknown>;
 
-interface SlackPostResponse {
+export interface SlackPostResponse {
+  rejected?: boolean;
+  uncertain?: boolean;
   ok: boolean;
   ts?: string;
   error?: string;
@@ -65,12 +67,17 @@ export function buildArticleReplyBlocks(article: Article): SlackBlock[] {
   ];
 }
 
+/** Keep the source link in fallback text: reaction sync reads text, not blocks. */
+export function buildArticleReplyText(article: Article): string {
+  return `<${article.url}|${escapeMrkdwn(article.title)}>`;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Post a single chat.postMessage. Returns the parsed response (best-effort — never throws). */
-async function postMessage(payload: Record<string, unknown>): Promise<SlackPostResponse> {
+export async function postMessage(payload: Record<string, unknown>): Promise<SlackPostResponse> {
   try {
     const res = await fetch(SLACK_CONFIG.apiUrl, {
       method: "POST",
@@ -81,10 +88,13 @@ async function postMessage(payload: Record<string, unknown>): Promise<SlackPostR
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15_000),
     });
-    // chat.postMessage returns HTTP 200 even on logical errors — check the `ok` field.
+    // Server/transport failures can occur after a post commits. Never auto-retry
+    // those from the optional delivery command without reconciling Slack history.
+    if (res.status === 429) return { ok: false, rejected: true, error: "ratelimited" };
+    if (res.status >= 500) return { ok: false, uncertain: true };
     return (await res.json()) as SlackPostResponse;
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, uncertain: true, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -122,7 +132,7 @@ export async function postSlackDigest(articles: Article[], total: number): Promi
     const reply = await postMessage({
       channel: env.SLACK_CHANNEL_ID,
       thread_ts: parent.ts,
-      text: a.title, // fallback text for notifications / accessibility
+      text: buildArticleReplyText(a), // also used to resolve reaction URLs
       blocks: buildArticleReplyBlocks(a),
       unfurl_links: false,
     });
@@ -132,5 +142,5 @@ export async function postSlackDigest(articles: Article[], total: number): Promi
   }
 
   console.log(`  Slack digest: parent + ${posted}/${top.length} article replies`);
-  return true;
+  return posted === top.length;
 }

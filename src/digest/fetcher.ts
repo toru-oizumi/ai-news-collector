@@ -14,7 +14,7 @@ let _browser: Browser | null = null;
 
 async function getBrowser(): Promise<Browser> {
   if (!_browser) {
-    _browser = await chromium.launch({ headless: true });
+    _browser = await chromium.launch({ headless: true, timeout: 15_000 });
   }
   return _browser;
 }
@@ -55,7 +55,8 @@ async function fetchWithHeadless(url: string, maxChars: number): Promise<string[
     page = await browser.newPage();
     // Use "domcontentloaded" instead of "networkidle" — SPAs with background
     // requests can keep network busy indefinitely, causing consistent timeouts.
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    if (!response?.ok()) return [];
     const html = await page.content();
     return extractParagraphs(html, maxChars);
   } catch (err) {
@@ -93,12 +94,15 @@ async function fetchWithCheerio(url: string, maxChars: number): Promise<string[]
   }
 }
 
-function extractParagraphs(html: string, maxChars: number): string[] {
+export function extractParagraphs(html: string, maxChars: number): string[] {
   const $ = cheerio.load(html);
 
   $("script, style, nav, header, footer, aside, iframe, noscript, .ad, .sidebar").remove();
 
-  const target = $("article").length > 0 ? $("article") : $("body");
+  // Generic body fallback mixes navigation/related posts with the article. Abstain
+  // when a page has no recognizable main content instead of inventing a summary.
+  const target =
+    $("article").first().length > 0 ? $("article").first() : $("main, [role=main]").first();
 
   const paragraphs: string[] = [];
   let totalChars = 0;

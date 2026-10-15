@@ -145,3 +145,19 @@ describe("mapItem — keyword filter", () => {
     expect(mapItem(item({ title: "Now available in Tokyo" }), config)).toBeNull();
   });
 });
+
+it("filters the Northern Gannet regression from the mixed Simon Willison feed", async () => {
+  const { RSS_SOURCES } = await import("../../config.js");
+  const config = RSS_SOURCES.find((source) => source.name === "Simon Willison");
+  if (!config) throw new Error("Missing source");
+  expect(
+    mapItem(
+      {
+        title: "Northern Gannet",
+        link: "https://simonwillison.net/2026/Aug/15/sighting-391300422/",
+        contentSnippet: "A seabird sighting on the coast.",
+      },
+      config
+    )
+  ).toBeNull();
+});

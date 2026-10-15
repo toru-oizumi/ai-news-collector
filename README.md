@@ -1,49 +1,48 @@
 # AI News Collector
 
 Automatically collects the latest AI/ML news and stores it in a Notion Database.
-Runs two daily jobs: **collect** (fetch & summarize) and **digest** (detailed analysis + full translation).
+Runs a collection workflow every six hours. Collection saves raw articles first;
+a separate, bounded enrichment job produces evidence-checked summaries.
 
 ## Architecture
 
 ```text
-[Job 1: collect]  every 6h (00:00 / 06:00 / 12:00 / 18:00 UTC)
-├─ Sync Slack reactions → Notion Status (⭐→Starred, ✅/👀/👎→Read; best-effort)
-├─ Fetch (parallel)
-│  ├─ RSS: OpenAI, DeepMind, Google AI, Meta AI, NVIDIA, AWS, arXiv,
-│  │        + practitioner: Simon Willison, Import AI, Latent Space, Changelog, GitHub Trending
-│  ├─ HTML Scrape: Anthropic (news + engineering)
-│  ├─ API: Hacker News (Algolia), HuggingFace Daily Papers, Lobsters (hottest.json)
-│  └─ Japanese: Hatena Bookmark (search RSS), Zenn (topic feeds), Qiita (API v2)
-├─ Dedup (URL normalization; crowd-backed duplicate wins)
-├─ Score & Categorize (source weight + keyword bonus + normalized crowd score)
-│     └─ Stamp Lang (en/ja) + Kind (primary/secondary) from SOURCE_META
-├─ Notion Dedup (exclude existing URLs)
-├─ Select (per-source cap; Japanese gets its own quota, separate from the Mistral budget)
-├─ Summarize (Mistral Small → short Japanese summary, 2-3 sentences)
-│     └─ Skipped for Japanese articles — the feed excerpt is used instead
-├─ Push to Notion Database (Status: "Unread")
-└─ Post digest to Slack (parent message + one threaded reply per article)
+collect (8-minute processing budget; 15-minute job timeout)
+  Fetch sources in parallel → URL dedup → score/filter
+  Checkpoint every eligible raw article locally (no model quota)
+  Skip locally confirmed URLs; check Notion before each remaining create
+  Save raw metadata + original excerpt + processing marker in one Notion request
+  Checkpoint unfinished saves and an enrichment queue
 
-[Job 2: digest]  chained after each successful collect run (same workflow)
-├─ Query Notion (Status="Unread", top 30 by Score)
-├─ Fetch article body (cheerio HTML scraper)
-├─ Generate Digest (Mistral → Japanese summary 400-600 chars + Key Points)
-├─ Translate (Mistral → full Japanese translation)
-├─ Write to Notion page body:
-│     📝 Digest
-│     ■ Key Points
-│     ─────────
-│     🇯🇵 日本語全文訳
-└─ Update Status: "Unread" → "Digested"
+digest (10 articles / 12-minute processing budget; 20-minute job timeout)
+  Read saved page references, oldest pending first
+  Fetch article body → reject missing/short/non-AI evidence
+  One Mistral request → validate complete JSON + verbatim quotes + names/numbers
+  Replace Summary and the owned processing block; preserve user Status
+  Stop the run at the first 429; retry transient failures in later runs (max 3)
 
-[Job 3: publish]  chained after digest (same workflow)
-├─ Export Notion → web/src/data/articles.json (properties only, one snapshot)
-├─ Astro SSG build (output: "static", no adapter)
-└─ wrangler deploy → Cloudflare Workers Static Assets
+brief
+  Read bounded recent Notion candidates → source-linked JSON/Markdown + provenance manifest
+  Emit explicit diagnostic output on failure; never reuse stale news
+
+publish
+  Include the same brief under the existing site gate
+  Export saved Notion properties → Astro build → existing optional deployment
+  May proceed when collection is partial or enrichment fails
 ```
 
-The site is a read-only view; Notion stays the place you edit (and the Slack reactions
-still drive Status). See [Browsing site](#browsing-site).
+Automatic Slack posting, reaction sync, and full translation are suspended in this
+proposed pipeline. Explicit optional commands preserve manual use; scheduled entry
+points do not call them.
+This prevents raw saves and publication from depending on model waits or a partially
+posted Slack thread. No new delivery integration is enabled.
+
+The selected cloud path now also builds a timestamped three-item brief artifact and
+optionally includes it in the existing gated site. See [Cloud brief and adoption](docs/cloud-brief.md)
+for the output contract, recovery, real retrieval options and the parent-side trial.
+
+See [Reliability and recovery](docs/reliability.md) for processing states, checkpoint
+recovery, behavior changes, limitations, and offline review commands.
 
 ## Setup
 
@@ -59,7 +58,7 @@ still drive Status). See [Browsing site](#browsing-site).
 | Source | Select | |
 | Category | Multi-select | |
 | Score | Number | |
-| Summary | Rich text | Short 2-3 sentence summary (Job 1) |
+| Summary | Rich text | Grounded summary (enrichment); empty on abstention |
 | Published | Date | |
 | Fetched | Date | |
 | Status | Select | **Unread** / **Digested** / Read / Starred |
@@ -69,11 +68,8 @@ still drive Status). See [Browsing site](#browsing-site).
 1. Connect the Integration to the Database (••• → Connections → add your Integration).
 1. Copy the Database ID from the URL: `https://www.notion.so/<DATABASE_ID>?v=...`
 
-> **Note:** Add **"Digested"** as a Status option so Job 2 can update processed articles.
->
-> **Required for Job 2:** the **Lang** property must exist. Job 2 filters on it to skip
-> Japanese articles, and Notion rejects a query that filters on a missing property — so
-> the digest job fails outright without it. Job 1 tolerates its absence (it omits the field).
+Enrichment state is stored in a collector-owned JSON code block on each new page.
+No new database property is required. Enrichment does not change the reading Status.
 
 ### 2. Mistral API
 
@@ -87,26 +83,12 @@ Get a free API Key from [Mistral AI Console](https://console.mistral.ai/) → AP
    - `NOTION_DATABASE_ID`
    - `MISTRAL_API_KEY`
 
-### 4. Slack (optional)
+### 4. Slack (suspended)
 
-Set `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` (both) to post a digest after each collect run
-and to sync reactions back to Notion. Leave them unset to disable.
-
-- **Bot Token Scopes**: `chat:write` (post), `channels:history` (or `groups:history` for a
-  private channel), `reactions:read` (read reactions). Invite the bot to the target channel.
-- The digest is posted as a **parent message + one threaded reply per article**, so reactions
-  land on individual articles.
-- **React to curate** — the next collect run reflects reactions into Notion Status:
-
-  | Reaction (any of) | Notion Status |
-  |---|---|
-  | ⭐🌟✨🔥💯❤️😍🎉👏🙌🔖📌💡 (`star`, `fire`, `100`, `heart`, `tada`, `bookmark`, …) | **Starred** |
-  | ✅☑️✔️👀👍👎🆗🙏 (`white_check_mark`, `eyes`, `+1`, `-1`, `ok_hand`, …) | **Read** |
-
-  See `SLACK_CONFIG.reactions` in `src/config.ts` for the full list; add your own aliases there.
-
-  Reactions only advance status forward (`Unread`/`Digested` → `Read` → `Starred`); a status you
-  set manually is never overwritten.
+The collector no longer calls Slack. Existing secrets alone do not restore automatic
+posting or reaction sync. Use the reviewed outbox commands in
+[Compatibility and migration](docs/reliability.md#compatibility-and-migration), or choose
+to reconnect separate scheduled jobs before adopting this branch.
 
 ### 5. Qiita (optional)
 
@@ -173,7 +155,7 @@ npm run collect:dry
 # Full collect run
 npm run collect
 
-# Digest + translate run (requires Notion articles with Status="Unread")
+# Bounded summaries of saved pages (requires the local enrichment checkpoint)
 npm run digest
 ```
 
@@ -279,12 +261,10 @@ entry is a compile error rather than a silent default.
 
 ### Japanese sources
 
-Hatena / Zenn / Qiita are classified `lang: "ja"` in `SOURCE_META`, which changes two things:
-
-- **They skip Mistral summarization.** A Japanese-to-Japanese round trip would burn a 31s
-  rate-limit slot to reproduce the feed excerpt, so `abstract` is used as the summary.
-  They get their own quota (`JP_CONFIG.maxPerRun`), independent of the Mistral budget.
-- **Job 2 skips them** for the same reason — see the Notion `Lang` property note above.
+Hatena / Zenn / Qiita are classified `lang: "ja"` in `SOURCE_META`. They skip Mistral.
+The original feed excerpt is preserved in the processing block with status `excerpt`
+and in Summary with an explicit unverified-excerpt label. Collection quotas no longer depend on language
+or model capacity; the deadline leaves unsaved candidates checkpointed for replay.
 
 Because `keywordBonus` is matched against Japanese text too, Japanese equivalents are
 folded into the existing rules (e.g. `"エージェント"` alongside `"agent"`). Without them,
@@ -301,9 +281,8 @@ Edit `SCORE_CONFIG` in `src/config.ts`:
   (`crowdBonus = min(maxBonus, weight × log10(crowdScore × scale + 1))`).
   `scale` aligns the different vote scales before the log — tune it per source.
 - `minScore`: filter threshold
-- `maxPerSource`: cap on how many articles a single source contributes to the
-  final summarize set, so a high-volume source (e.g. OpenAI returns ~1000 items)
-  can't monopolize every slot and bury lower-scoring practitioner/crowd content
+- `maxPerSource`: retained for the `selectDiverse` helper; raw collection no longer
+  truncates eligible articles to a summarization quota
 
 Crowd-scored sources (Hacker News, Lobsters, Hatena, Qiita) expose `crowdScore` on each
 article; academic sources (arXiv, HuggingFace) carry a deliberately lower base weight so
@@ -317,19 +296,13 @@ threshold, every Zenn item would be filtered out and the source would contribute
 
 Edit `CATEGORY_RULES` in `src/pipeline/scorer.ts`.
 
-## Cost
+## Processing limits
 
-All within free tiers:
-
-| Service | Free Tier | Notes |
-|---|---|---|
-| GitHub Actions | Unlimited for public repos | collect ~28 min + digest (rate-limited) run 4×/day |
-| Mistral API | 1B tokens/month, 2 RPM | well under the free tier at the current volume |
-| Notion API | Free plan | — |
-
-Actions minutes are free because this repo is **public** (private repos get 2,000 min/month,
-which the 4×/day cadence would exceed). The 2 RPM Mistral limit is the real pacing constraint:
-the digest job processes ~30 articles/run at ~62s each (digest + full translation).
+The existing Mistral model is unchanged. Enrichment makes at most one request per
+processed article, at most ten articles per run, with a 31-second inter-request delay.
+Full translation no longer doubles the request count. A 429 stops that run immediately.
+The 12-minute processing budget may reduce throughput further; pending count is printed
+on every run. Collection makes no model requests.
 
 ## License
 
