@@ -37,7 +37,7 @@ points do not call them.
 This prevents raw saves and publication from depending on model waits or a partially
 posted Slack thread. No new delivery integration is enabled.
 
-The selected cloud path now also builds a timestamped three-item brief artifact and
+The selected cloud path now also builds a timestamped brief artifact with up to three recent body-grounded summaries and
 optionally includes it in the existing gated site. See [Cloud brief and adoption](docs/cloud-brief.md)
 for the output contract, recovery, real retrieval options and the parent-side trial.
 

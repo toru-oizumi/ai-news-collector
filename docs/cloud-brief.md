@@ -41,29 +41,55 @@ The JSON schema is version 1. The bundle records:
 | `deliveryAllowed` | Producer's eligibility decision; consumer must still verify freshness |
 | `collection` / `enrichment` | Current stage reports, outcomes, timestamps and backlog counts |
 | `sourceReadAt` | Time of the bounded live Notion read |
-| `selection` | Maximum 3 articles, maximum 12 source candidates and sampling-limit flag |
+| `selection` | Policy `grounded_recent_v1`, maximum 3 articles, maximum 48 scanned records and sampling-limit flag |
 | `articles[].id` | Stable hash of normalized source URL, for consumer delivery deduplication |
 | `articles[].source` / `url` | Article attribution and direct source link |
 | `publishedAt` / `collectedAt` | Publication value, when known, and precise collection time |
-| `summaryKind` | `source_quoted`, `feed_excerpt`, or `none` |
+| `summaryKind` | Automatic delivery requires `source_quoted`; excerpts and missing summaries are excluded |
+| `summaryHash` | SHA-256 of the exact summary, rechecked by the consumer |
+| `delivery` | Producer has not attempted delivery or checked delivery history |
 | `summaryRecordedAt` / `model` | Recorded model result time/name when a source-quoted summary is used |
 
-A source-quoted summary is shown only when the current Summary hash matches the owned
-processing state, with the original body quotations retained. A manually changed or
-legacy unprovenanced Summary is not silently used. Excerpts are labelled unverified;
-missing summaries remain explicit. These checks do not establish semantic correctness.
+The automatic brief now requires a nonempty body-based summary with matching owned
+processing state, Summary hash, one to five supporting quotations and a valid recorded
+time. Feed excerpts, missing summaries and legacy unprovenanced summaries cannot fill
+its three slots. Japanese feed excerpts remain stored in Notion and available through
+browsing/local preview, but are not presented as body-grounded summaries in chat briefs.
+These formal checks do not establish semantic correctness.
 
-The read is bounded to twelve high-scored recently created pages, not a complete global
-ranking. Exact `created_time` and publication filters avoid old high-scoring rows filling
-the entire day-wide `Fetched` window. Source metadata is still rechecked after reading;
-old raw entries saved from a backlog can be excluded. A limited candidate window is
-reported as partial. A rare mix of excluded or unmanaged candidates can yield fewer
-than three results even if other valid articles exist outside that window.
+Candidate retrieval filters for nonempty Summary, known recent publication and precise
+recent page creation, then sorts by publication time, creation time and finally score.
+It reads up to four pages of twelve records within a two-minute budget, verifying the
+owned processing block on each. This can look past an initial page of unverified
+excerpts without letting score-ranked old articles monopolize the candidate window.
+Final selection rechecks original collection/publication age and summary provenance,
+then ranks publication time, collection time and score, in that order. It returns
+zero to three eligible articles and never pads missing slots with excerpts or titles.
+A known publication date is required for automatic delivery.
+
+This is still a bounded read, not a guarantee of finding every qualified summary.
+Forty-eight excluded/legacy/excerpt records can fill the window; the sampling-limit
+flag and scanned count remain visible. A limited read is partial when it has eligible
+articles. With none, the bundle is `empty`, `deliveryAllowed=false`, and records
+`no_grounded_recent_articles`, even when collection and the workflow succeeded.
+
+Schema version 1 is retained with additive provenance/policy metadata. Consumers must
+require `selection.policy=grounded_recent_v1` and recheck summary hash, quotation shape,
+recorded time and freshness. Previous artifacts lacking these fields must not pass the
+new delivery verifier. Existing checkpoints and Notion pages are not migrated.
+
+`delivery={attempted:false,history:"not_checked"}` describes this producer only.
+Generation is not evidence of reading, a successful chat delivery, or unseen articles.
+No delivery ledger is created from generated candidates. A regenerated qualified
+article can recur if no fresher eligible item exists; only the parent's real successful
+delivery history can suppress it. `deliveryAllowed` means content eligibility, not
+novelty or confirmed delivery. When that history is unavailable, the parent must report
+the limitation instead of inventing sent/seen records.
 
 ### Freshness and failure rules
 
 - Generation is valid for at most eight hours, collection for twenty-four hours, and
-  known publication time for seven days. Expiry is the **earliest** of these limits.
+  required publication time for seven days. Expiry is the **earliest** of these limits.
 - The consumer rechecks all limits at delivery time, including publication expiry.
   Invalid/future timestamps, repository/ref/SHA/run/attempt mismatches are rejected.
 - Collection failure without a confirmed saved snapshot, invalid checkpoints, a failed
@@ -221,7 +247,7 @@ hash mismatch, stage failure reports, optional delivery replay guards, and the u
 Worker gate on all three brief assets. External APIs and messages are mocked in tests;
 workflow timing, GitHub authorization and live retrieval remain unverified until adoption.
 
-Verified locally: 175 core tests and 41 Worker tests pass, including the four new
+Verified locally: 212 core tests and 41 Worker tests pass, including the four new
 brief gate cases. TypeScript, Biome, Markdown lint and Actionlint pass. Astro checks
 report no errors or warnings; the fixture build produces nineteen pages and copies
 all three brief assets while retaining `deliveryAllowed=false` for unavailable data.

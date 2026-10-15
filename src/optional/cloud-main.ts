@@ -26,7 +26,7 @@ async function main(): Promise<void> {
       source: a.source as Article["source"],
       category: [],
       score: a.score,
-      summary: a.summary ? `自動要約・抜粋（意味未検証）: ${a.summary}` : "要約なし",
+      summary: `自動要約（本文引用と形式照合・意味未検証）: ${a.summary}`,
       abstract: "",
       publishedAt: a.publishedAt ? new Date(a.publishedAt) : null,
       fetchedAt: new Date(a.collectedAt),

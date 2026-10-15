@@ -12,6 +12,7 @@ import {
   MAX_PUBLISHED_AGE_MS,
   assertDeliverable,
   buildBundle,
+  digest,
   renderBundle,
 } from "../bundle.js";
 import { verifyBriefFiles, writeBriefFiles } from "../files.js";
@@ -45,7 +46,9 @@ const article = (n: number): BriefCandidate => ({
   score: n,
   collectedAt: new Date(now - 60_000).toISOString(),
   publishedAt: "2026-10-15",
-  summary: "自動要約です。",
+  summary: "記事本文に示された内容を、出典の引用と照合した日本語の要約として伝えます。",
+  summaryHash: digest("記事本文に示された内容を、出典の引用と照合した日本語の要約として伝えます。"),
+  summaryRecordedAt: new Date(now - 1000).toISOString(),
   summaryKind: "source_quoted",
   evidence: ["Original supporting source sentence."],
 });
@@ -238,11 +241,91 @@ it("does not fill a brief with old backlog or refresh rediscovered collection ti
       ...article(Number(a.url.split("/").pop())),
       collectedAt: a.fetchedAt.toISOString(),
       publishedAt: a.publishedAt?.toISOString() ?? null,
-      summary: "",
-      summaryKind: "none",
-      evidence: [],
     })),
   });
   expect(bundle.articles.map((a) => a.title)).toEqual(["AI article 1"]);
   expect(bundle.articles).toHaveLength(1); // fewer than three is preferable to padded old news
+});
+
+it("does not let the fixed high-score excerpt/empty trio displace a fresh grounded summary", () => {
+  const fixed = [
+    { ...article(1000), title: "REA excerpt", summaryKind: "feed_excerpt" as const },
+    { ...article(900), title: "Asana no summary", summaryKind: "none" as const, summary: "" },
+    {
+      ...article(800),
+      title: "Third Moment no summary",
+      summaryKind: "none" as const,
+      summary: "",
+    },
+  ];
+  const older = { ...article(700), publishedAt: "2026-10-13" };
+  const first = buildBundle({ ...input(), candidates: [...fixed, older] });
+  expect(first.articles.map((a) => a.title)).toEqual([older.title]);
+  const fresh = { ...article(1), publishedAt: "2026-10-15" };
+  const next = buildBundle({ ...input(), candidates: [...fixed, older, fresh] });
+  expect(next.articles.map((a) => a.title)).toEqual([fresh.title, older.title]);
+  expect(next.articles).toHaveLength(2);
+});
+
+it("reports no eligible delivery when all summaries are missing, excerpts or unprovenanced", () => {
+  const bundle = buildBundle({
+    ...input(),
+    candidates: [
+      { ...article(1), summaryKind: "none", summary: "" },
+      { ...article(2), summaryKind: "feed_excerpt" },
+      { ...article(3), summaryHash: "changed" },
+    ],
+  });
+  expect(bundle).toMatchObject({ status: "empty", deliveryAllowed: false, articles: [] });
+  expect(bundle.reasons).toContain("no_grounded_recent_articles");
+  expect(() => assertDeliverable(bundle, run, now)).toThrow();
+});
+
+it("rechecks provenance and rejects a downgraded article at actual delivery", () => {
+  for (const change of [
+    { summaryKind: "none" as const },
+    { summaryKind: "feed_excerpt" as const },
+    { summaryHash: "wrong" },
+    { summary: "changed" },
+    { evidence: [] },
+    { evidence: ["short"] },
+    { summaryRecordedAt: "invalid" },
+    { summaryRecordedAt: new Date(now + 120_000).toISOString() },
+    { publishedAt: null },
+  ]) {
+    const bundle = buildBundle(input());
+    Object.assign(bundle.articles[0], change);
+    expect(() => assertDeliverable(bundle, run, now)).toThrow();
+  }
+});
+
+it("ranks recent publication and collection before score; known publication is required", () => {
+  const bundle = buildBundle({
+    ...input(),
+    candidates: [
+      { ...article(999), publishedAt: "2026-10-12" },
+      { ...article(1), collectedAt: new Date(now - 1000).toISOString() },
+      { ...article(2), collectedAt: new Date(now - 2000).toISOString() },
+      { ...article(888), publishedAt: null },
+    ],
+  });
+  expect(bundle.articles.map((a) => a.title)).toEqual([
+    "AI article 1",
+    "AI article 2",
+    "AI article 999",
+  ]);
+});
+
+it("does not invent delivery history or treat generation as a sent/seen record", () => {
+  const first = buildBundle(input());
+  const generatedAgain = buildBundle(input());
+  expect(first.delivery).toEqual({ attempted: false, history: "not_checked" });
+  expect(generatedAgain.articles.map((a) => a.id)).toEqual(first.articles.map((a) => a.id));
+  expect(renderBundle(first)).toContain("配信履歴は照合していません");
+});
+
+it("rejects old score-only selection policy even when deliveryAllowed is true", () => {
+  const bundle = buildBundle(input());
+  Object.assign(bundle.selection, { policy: "score_only_v0" });
+  expect(() => assertDeliverable(bundle, run, now)).toThrow();
 });

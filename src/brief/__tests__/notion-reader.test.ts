@@ -1,11 +1,13 @@
 import type { Client } from "@notionhq/client";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { STATE_MARKER } from "../../enrichment/state.js";
 import { MAX_ARTICLE_AGE_MS, digest } from "../bundle.js";
 import { readBriefCandidates } from "../notion-reader.js";
 
+afterEach(() => vi.restoreAllMocks());
+
 const now = Date.parse("2026-10-15T12:00:00Z");
-const summary = "本文の出典付き自動要約です。";
+const summary = "記事本文に示された内容を、出典の引用と照合した日本語の要約として伝えます。";
 const state = {
   marker: STATE_MARKER,
   status: "ready",
@@ -54,6 +56,19 @@ describe("bounded brief source read", () => {
     const { client, query } = setup();
     const articles = await readBriefCandidates(client, "database", now);
     expect(query.mock.calls[0][0].page_size).toBe(12);
+    expect(query.mock.calls[0][0].sorts).toEqual([
+      { property: "Published", direction: "descending" },
+      { timestamp: "created_time", direction: "descending" },
+      { property: "Score", direction: "descending" },
+    ]);
+    expect(query.mock.calls[0][0].filter.and).toContainEqual({
+      property: "Summary",
+      rich_text: { is_not_empty: true },
+    });
+    expect(query.mock.calls[0][0].filter.and).toContainEqual({
+      property: "Published",
+      date: { on_or_before: new Date(now).toISOString() },
+    });
     expect(query.mock.calls[0][0].filter.and).toContainEqual({
       timestamp: "created_time",
       created_time: { on_or_after: new Date(now - MAX_ARTICLE_AGE_MS).toISOString() },
@@ -66,10 +81,86 @@ describe("bounded brief source read", () => {
   });
   it("does not trust a changed Summary or a legacy record with no processing marker", async () => {
     const changed = setup(JSON.stringify(state), "manually replaced summary");
-    expect((await readBriefCandidates(changed.client, "db", now)).articles[0].summaryKind).toBe(
-      "none"
-    );
+    expect((await readBriefCandidates(changed.client, "db", now)).articles).toEqual([]);
     const legacy = setup("{}");
     expect((await readBriefCandidates(legacy.client, "db", now)).articles).toEqual([]);
   });
+});
+
+it("looks past twelve unverified excerpts instead of pinning the same high-score candidates", async () => {
+  const excerpts = Array.from({ length: 12 }, (_, n) => ({ ...page, id: `excerpt-${n}` }));
+  const fresh = { ...page, id: "fresh", properties: { ...page.properties, Score: { number: 1 } } };
+  const query = vi
+    .fn()
+    .mockResolvedValueOnce({ results: excerpts, has_more: true, next_cursor: "next" })
+    .mockResolvedValueOnce({ results: [fresh], has_more: false });
+  const list = vi.fn(async ({ block_id }: { block_id: string }) => ({
+    results: [
+      {
+        type: "code",
+        code: {
+          rich_text: [
+            {
+              plain_text: JSON.stringify({
+                ...state,
+                status: block_id === "fresh" ? "ready" : "excerpt",
+              }),
+            },
+          ],
+        },
+      },
+    ],
+  }));
+  const client = { databases: { query }, blocks: { children: { list } } } as unknown as Client;
+  const result = await readBriefCandidates(client, "db", now);
+  expect(result.articles.map((a) => a.id)).toEqual(["fresh"]);
+  expect(result).toMatchObject({ scanned: 13, limited: false });
+  expect(query.mock.calls[1][0].start_cursor).toBe("next");
+});
+
+it("stops after 48 inspected records and reports the bounded candidate window", async () => {
+  let batch = 0;
+  const query = vi.fn(async () => ({
+    results: Array.from({ length: 12 }, (_, n) => ({ ...page, id: `${batch}-${n}` })),
+    has_more: true,
+    next_cursor: String(++batch),
+  }));
+  const list = vi.fn().mockResolvedValue({ results: [] });
+  const client = { databases: { query }, blocks: { children: { list } } } as unknown as Client;
+  expect(await readBriefCandidates(client, "db", now)).toMatchObject({
+    articles: [],
+    scanned: 48,
+    limited: true,
+  });
+  expect(query).toHaveBeenCalledTimes(4);
+  expect(list).toHaveBeenCalledTimes(48);
+});
+
+it("honors the read budget before querying and never falls back to high scores", async () => {
+  const { client, query } = setup();
+  vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(120_000);
+  expect(await readBriefCandidates(client, "db", now)).toEqual({
+    articles: [],
+    scanned: 0,
+    limited: true,
+  });
+  expect(query).not.toHaveBeenCalled();
+});
+
+it.each([
+  { ...state, status: "pending" },
+  { ...state, status: "excerpt" },
+  { ...state, input: "feed_excerpt" },
+  { ...state, evidence: [] },
+  { ...state, summaryHash: "wrong" },
+  { ...state, updatedAt: "invalid" },
+])("rejects non-body or inconsistent summary provenance before ranking: %j", async (processing) => {
+  const { client } = setup(JSON.stringify(processing));
+  expect((await readBriefCandidates(client, "db", now)).articles).toEqual([]);
+});
+
+it("fails visibly when pagination claims more data without a valid next cursor", async () => {
+  const { client, query } = setup();
+  query.mockResolvedValue({ results: [], has_more: true, next_cursor: null });
+  await expect(readBriefCandidates(client, "db", now)).rejects.toThrow("pagination cursor");
 });

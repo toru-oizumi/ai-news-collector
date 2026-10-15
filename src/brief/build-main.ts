@@ -21,6 +21,7 @@ async function main(): Promise<void> {
   let sourceReadAt: string | null = null;
   let readFailed = false;
   let sourceLimited = false;
+  let sourceScanned = 0;
   if (ready && collection && Number(collection.stats.fetched ?? 0) > 0) {
     try {
       if (!env.NOTION_API_KEY || !env.NOTION_DATABASE_ID)
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
       const result = await readBriefCandidates(notion, env.NOTION_DATABASE_ID, Date.now());
       candidates = result.articles;
       sourceLimited = result.limited;
+      sourceScanned = result.scanned;
       sourceReadAt = new Date().toISOString();
     } catch {
       readFailed = true;
@@ -54,6 +56,7 @@ async function main(): Promise<void> {
     sourceReadAt,
     readFailed,
     sourceLimited,
+    sourceScanned,
   });
   await writeBriefFiles("brief-output", bundle);
   if (process.env.GITHUB_STEP_SUMMARY)
