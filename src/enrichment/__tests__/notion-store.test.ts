@@ -1,5 +1,6 @@
 import type { Client } from "@notionhq/client";
 import { describe, expect, it, vi } from "vitest";
+import { NotionRequestPolicy } from "../../notion/request-policy.js";
 import { persistSummary } from "../notion-store.js";
 import type { EnrichmentRow } from "../processor.js";
 
@@ -20,8 +21,20 @@ it("replays replace the same Summary/property and managed block, never append or
       updatedAt: new Date(0).toISOString(),
     },
   };
-  await persistSummary(client, row, row.state, "summary");
-  await persistSummary(client, row, row.state, "summary");
+  await persistSummary(
+    client,
+    row,
+    row.state,
+    "summary",
+    new NotionRequestPolicy({ sleep: async () => {} })
+  );
+  await persistSummary(
+    client,
+    row,
+    row.state,
+    "summary",
+    new NotionRequestPolicy({ sleep: async () => {} })
+  );
   expect(pages.update.mock.calls[0]).toEqual(pages.update.mock.calls[1]);
   expect(blocks.update.mock.calls[0]).toEqual(blocks.update.mock.calls[1]);
   expect(pages.update.mock.calls[0][0].properties).toEqual({
@@ -49,7 +62,49 @@ it("can replay a Summary success followed by a failed managed-block update", asy
     },
   };
   await expect(persistSummary(client, row, row.state, "summary")).rejects.toThrow();
-  await persistSummary(client, row, row.state, "summary");
+  await persistSummary(
+    client,
+    row,
+    row.state,
+    "summary",
+    new NotionRequestPolicy({ sleep: async () => {} })
+  );
   expect(pages.update.mock.calls[0]).toEqual(pages.update.mock.calls[1]);
   expect(blocks.update.mock.calls[0]).toEqual(blocks.update.mock.calls[1]);
+});
+
+it("retries only the rejected state update after Summary has committed", async () => {
+  let time = 0;
+  const policy = new NotionRequestPolicy({
+    now: () => time,
+    sleep: async (ms) => {
+      time += ms;
+    },
+  });
+  const pages = { update: vi.fn().mockResolvedValue({}) };
+  const blocks = {
+    update: vi
+      .fn()
+      .mockRejectedValueOnce({ status: 429, headers: new Headers({ "retry-after": "2" }) })
+      .mockResolvedValue({}),
+  };
+  const client = { pages, blocks } as unknown as Client;
+  const row: EnrichmentRow = {
+    pageId: "page",
+    blockId: "block",
+    title: "title",
+    url: "url",
+    state: {
+      marker: "ai-news-processing:v1",
+      status: "ready",
+      attempts: 1,
+      abstract: "",
+      updatedAt: new Date(0).toISOString(),
+    },
+  };
+  await persistSummary(client, row, row.state, "summary", policy);
+  expect(pages.update).toHaveBeenCalledTimes(1);
+  expect(blocks.update).toHaveBeenCalledTimes(2);
+  expect(blocks.update.mock.calls[0]).toEqual(blocks.update.mock.calls[1]);
+  expect(time).toBe(2400);
 });

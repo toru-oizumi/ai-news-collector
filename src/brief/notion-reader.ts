@@ -1,5 +1,6 @@
 import type { Client } from "@notionhq/client";
 import { readState } from "../enrichment/state.js";
+import { type NotionRequestPolicy, notionPolicy } from "../notion/request-policy.js";
 import {
   type BriefCandidate,
   CANDIDATE_SCAN_LIMIT,
@@ -24,7 +25,8 @@ const text = (parts: { plain_text?: string }[] | undefined) =>
 export async function readBriefCandidates(
   notion: Client,
   databaseId: string,
-  now: number
+  now: number,
+  policy: NotionRequestPolicy = notionPolicy(notion)
 ): Promise<{ articles: BriefCandidate[]; limited: boolean; scanned: number }> {
   const candidates: BriefCandidate[] = [];
   const deadline = Date.now() + 120_000;
@@ -33,41 +35,54 @@ export async function readBriefCandidates(
   // Four pages of twelve; no unbounded crawl or fallback to score-ranked history.
   for (let batch = 0; batch < CANDIDATE_SCAN_LIMIT / 12; batch++) {
     if (Date.now() + 12_000 >= deadline) return { articles: candidates, limited: true, scanned };
-    const response = await notion.databases.query({
-      database_id: databaseId,
-      page_size: 12,
-      start_cursor: cursor,
-      filter: {
-        and: [
-          {
-            property: "Fetched",
-            date: { on_or_after: new Date(now - MAX_ARTICLE_AGE_MS).toISOString().slice(0, 10) },
+    const response = await policy.request(
+      "brief_query",
+      () =>
+        notion.databases.query({
+          database_id: databaseId,
+          page_size: 12,
+          start_cursor: cursor,
+          filter: {
+            and: [
+              {
+                property: "Fetched",
+                date: {
+                  on_or_after: new Date(now - MAX_ARTICLE_AGE_MS).toISOString().slice(0, 10),
+                },
+              },
+              {
+                timestamp: "created_time",
+                created_time: { on_or_after: new Date(now - MAX_ARTICLE_AGE_MS).toISOString() },
+              },
+              {
+                property: "Published",
+                date: {
+                  on_or_after: new Date(now - MAX_PUBLISHED_AGE_MS).toISOString().slice(0, 10),
+                },
+              },
+              { property: "Published", date: { on_or_before: new Date(now).toISOString() } },
+              { property: "Summary", rich_text: { is_not_empty: true } },
+            ],
           },
-          {
-            timestamp: "created_time",
-            created_time: { on_or_after: new Date(now - MAX_ARTICLE_AGE_MS).toISOString() },
-          },
-          {
-            property: "Published",
-            date: { on_or_after: new Date(now - MAX_PUBLISHED_AGE_MS).toISOString().slice(0, 10) },
-          },
-          { property: "Published", date: { on_or_before: new Date(now).toISOString() } },
-          { property: "Summary", rich_text: { is_not_empty: true } },
-        ],
-      },
-      sorts: [
-        { property: "Published", direction: "descending" },
-        { timestamp: "created_time", direction: "descending" },
-        { property: "Score", direction: "descending" },
-      ],
-    });
+          sorts: [
+            { property: "Published", direction: "descending" },
+            { timestamp: "created_time", direction: "descending" },
+            { property: "Score", direction: "descending" },
+          ],
+        }),
+      deadline
+    );
     if (response.results.length > 12) throw new Error("Unexpected brief page size");
     for (const page of response.results) {
       if (Date.now() + 12_000 >= deadline) return { articles: candidates, limited: true, scanned };
       scanned++;
       if (!("properties" in page) || !("created_time" in page)) continue;
       const props = page.properties as Props;
-      const blocks = await notion.blocks.children.list({ block_id: page.id, page_size: 100 });
+      const blocks = await policy.request(
+        "brief_state",
+        () => notion.blocks.children.list({ block_id: page.id, page_size: 100 }),
+        deadline
+      );
       const state = blocks.results
         .flatMap((block) =>
           "type" in block && block.type === "code" ? [readState(text(block.code.rich_text))] : []

@@ -1,6 +1,8 @@
 import { appendFile } from "node:fs/promises";
 import { Client } from "@notionhq/client";
 import { env } from "../config.js";
+import { boundedNotionFetch } from "../notion/bounded-fetch.js";
+import { NotionRequestError, NotionRequestPolicy } from "../notion/request-policy.js";
 import { currentRun, loadReport } from "../runtime/reports.js";
 import { type BriefCandidate, buildBundle } from "./bundle.js";
 import { writeBriefFiles } from "./files.js";
@@ -29,16 +31,23 @@ async function main(): Promise<void> {
       const notion = new Client({
         auth: env.NOTION_API_KEY,
         timeoutMs: 10_000,
-        fetch: fetch as unknown as NonNullable<
+        logger: () => {}, // Do not log raw SDK errors or payloads.
+        fetch: boundedNotionFetch as unknown as NonNullable<
           NonNullable<ConstructorParameters<typeof Client>[0]>["fetch"]
         >,
       });
-      const result = await readBriefCandidates(notion, env.NOTION_DATABASE_ID, Date.now());
+      const result = await readBriefCandidates(
+        notion,
+        env.NOTION_DATABASE_ID,
+        Date.now(),
+        new NotionRequestPolicy({ diagnostic: (detail) => console.warn(JSON.stringify(detail)) })
+      );
       candidates = result.articles;
       sourceLimited = result.limited;
       sourceScanned = result.scanned;
       sourceReadAt = new Date().toISOString();
-    } catch {
+    } catch (error) {
+      if (error instanceof NotionRequestError) console.error(JSON.stringify(error.diagnostic));
       readFailed = true;
     }
   } else if (ready && collection && collection.stats.fetched === 0) {

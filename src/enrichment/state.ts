@@ -74,7 +74,7 @@ export function readState(text: string): ProcessingState | null {
 export function eligible(state: ProcessingState, now: number): boolean {
   return (
     ["pending", "body_unavailable", "rate_limited", "model_failed"].includes(state.status) &&
-    state.attempts < 3 &&
+    (state.status === "rate_limited" || state.attempts < 3) &&
     (!state.nextAttemptAt || Date.parse(state.nextAttemptAt) <= now)
   );
 }

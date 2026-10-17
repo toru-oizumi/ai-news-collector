@@ -72,6 +72,9 @@ export async function enrichOne(
   } catch (error) {
     state.failure = error instanceof MistralRequestError ? error.diagnostic : undefined;
     state.status = state.failure?.httpStatus === 429 ? "rate_limited" : "model_failed";
+    // Model throttling is not an article failure. Do not charge an attempt,
+    // including on legacy rate-limited rows that already exhausted their budget.
+    if (state.status === "rate_limited") state.attempts = row.state.attempts;
   }
   // Summary update happens first, then the state block. Replays overwrite the same
   // properties/block; they never append duplicate digests or overwrite reading Status.
