@@ -1,11 +1,21 @@
 import type { Client } from "@notionhq/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { STATE_MARKER } from "../../enrichment/state.js";
+import { NotionRequestPolicy } from "../../notion/request-policy.js";
 import { MAX_ARTICLE_AGE_MS, digest } from "../bundle.js";
 import { readBriefCandidates } from "../notion-reader.js";
 
 afterEach(() => vi.restoreAllMocks());
 
+const policy = () => {
+  let time = Date.now();
+  return new NotionRequestPolicy({
+    now: () => time,
+    sleep: async (ms) => {
+      time += ms;
+    },
+  });
+};
 const now = Date.parse("2026-10-15T12:00:00Z");
 const summary = "記事本文に示された内容を、出典の引用と照合した日本語の要約として伝えます。";
 const state = {
@@ -54,7 +64,7 @@ const setup = (text = JSON.stringify(state), storedSummary = summary) => {
 describe("bounded brief source read", () => {
   it("filters old created_time precisely before limiting candidates to twelve", async () => {
     const { client, query } = setup();
-    const articles = await readBriefCandidates(client, "database", now);
+    const articles = await readBriefCandidates(client, "database", now, policy());
     expect(query.mock.calls[0][0].page_size).toBe(12);
     expect(query.mock.calls[0][0].sorts).toEqual([
       { property: "Published", direction: "descending" },
@@ -81,9 +91,9 @@ describe("bounded brief source read", () => {
   });
   it("does not trust a changed Summary or a legacy record with no processing marker", async () => {
     const changed = setup(JSON.stringify(state), "manually replaced summary");
-    expect((await readBriefCandidates(changed.client, "db", now)).articles).toEqual([]);
+    expect((await readBriefCandidates(changed.client, "db", now, policy())).articles).toEqual([]);
     const legacy = setup("{}");
-    expect((await readBriefCandidates(legacy.client, "db", now)).articles).toEqual([]);
+    expect((await readBriefCandidates(legacy.client, "db", now, policy())).articles).toEqual([]);
   });
 });
 
@@ -112,7 +122,7 @@ it("looks past twelve unverified excerpts instead of pinning the same high-score
     ],
   }));
   const client = { databases: { query }, blocks: { children: { list } } } as unknown as Client;
-  const result = await readBriefCandidates(client, "db", now);
+  const result = await readBriefCandidates(client, "db", now, policy());
   expect(result.articles.map((a) => a.id)).toEqual(["fresh"]);
   expect(result).toMatchObject({ scanned: 13, limited: false });
   expect(query.mock.calls[1][0].start_cursor).toBe("next");
@@ -127,7 +137,7 @@ it("stops after 48 inspected records and reports the bounded candidate window", 
   }));
   const list = vi.fn().mockResolvedValue({ results: [] });
   const client = { databases: { query }, blocks: { children: { list } } } as unknown as Client;
-  expect(await readBriefCandidates(client, "db", now)).toMatchObject({
+  expect(await readBriefCandidates(client, "db", now, policy())).toMatchObject({
     articles: [],
     scanned: 48,
     limited: true,
@@ -138,8 +148,9 @@ it("stops after 48 inspected records and reports the bounded candidate window", 
 
 it("honors the read budget before querying and never falls back to high scores", async () => {
   const { client, query } = setup();
+  const requestPolicy = policy();
   vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(120_000);
-  expect(await readBriefCandidates(client, "db", now)).toEqual({
+  expect(await readBriefCandidates(client, "db", now, requestPolicy)).toEqual({
     articles: [],
     scanned: 0,
     limited: true,
@@ -156,11 +167,25 @@ it.each([
   { ...state, updatedAt: "invalid" },
 ])("rejects non-body or inconsistent summary provenance before ranking: %j", async (processing) => {
   const { client } = setup(JSON.stringify(processing));
-  expect((await readBriefCandidates(client, "db", now)).articles).toEqual([]);
+  expect((await readBriefCandidates(client, "db", now, policy())).articles).toEqual([]);
 });
 
 it("fails visibly when pagination claims more data without a valid next cursor", async () => {
   const { client, query } = setup();
   query.mockResolvedValue({ results: [], has_more: true, next_cursor: null });
-  await expect(readBriefCandidates(client, "db", now)).rejects.toThrow("pagination cursor");
+  await expect(readBriefCandidates(client, "db", now, policy())).rejects.toThrow(
+    "pagination cursor"
+  );
+});
+
+it("retries query and provenance reads through the same policy without changing quality gates", async () => {
+  const { client, query } = setup();
+  query.mockRejectedValueOnce({ status: 429, headers: new Headers({ "retry-after": "2" }) });
+  const list = vi.mocked(client.blocks.children.list);
+  list.mockRejectedValueOnce({ status: 429, headers: new Headers({ "retry-after": "1" }) });
+  const result = await readBriefCandidates(client, "db", now, policy());
+  expect(query).toHaveBeenCalledTimes(2);
+  expect(list).toHaveBeenCalledTimes(2);
+  expect(result.articles).toHaveLength(1);
+  expect(result.articles[0].summaryHash).toBe(digest(summary));
 });

@@ -79,7 +79,7 @@ It uses existing page blocks, so no database schema migration is needed.
 | `excerpt` | Japanese feed excerpt retained in Summary with an unverified label | No model call |
 | `ready` | Complete model response passed evidence checks | No |
 | `body_unavailable` | Fetch, HTTP, content type or extraction failed | After 6 hours, at most 3 attempts |
-| `rate_limited` | Mistral returned 429; the entire run stops | After 6 hours, at most 3 attempts |
+| `rate_limited` | Mistral returned 429; the entire run stops as failed/degraded | After 6 hours; does not consume article attempts |
 | `model_failed` | Transport, timeout or incomplete model response | After 6 hours, at most 3 attempts |
 | `insufficient_evidence` | Body too short to support a summary | No |
 | `non_ai` | Title/body fails the AI-topic gate | No |
@@ -97,7 +97,8 @@ status, a fixed allowlist of provider error codes
 Error-code parsing reads at most 8 KiB; messages, response text, raw headers, request
 URLs and exception messages are neither logged nor added to the diagnostic. Invalid,
 negative or greater-than-seven-day retry hints are omitted. These hints are diagnostic
-only: the six-hour delay, three-attempt limit and immediate stop on 429 are unchanged.
+only: the six-hour delay and immediate stop on model 429 remain. Model 429 does not
+consume the three-attempt allowance for article failures.
 Diagnostics replace the previous attempt's failure; successful recovery clears it.
 
 The enrichment queue keeps its existing FIFO order in this change. Fresh raw saves
@@ -106,10 +107,28 @@ body-grounded summary; titles and unverified feed excerpts cannot fill their slo
 Fresh AI summaries may still wait behind managed enrichment backlog. Old/unmanaged pages are not migrated.
 
 A run handles at most ten eligible pages within a twelve-minute processing budget.
-It reserves an attempt in the page block before generating content. An interrupted run
-therefore cannot retry one poison article indefinitely. Three attempts exhaust the
-automatic retry allowance, even when the last attempt was interrupted. A persistence
-failure stops enrichment with a failed job; saved collection can still be published.
+It reserves a six-hour cooldown before generating content; attempts are charged only
+when the processing result is persisted. This keeps an interrupted model 429 from
+exhausting the article budget when its result cannot be saved. Three persisted article
+failures exhaust the allowance; model 429 remains retryable, including legacy managed
+rate-limited rows already at three attempts. Rows removed by older runs are not
+automatically restored. An interruption may repeat generation after the cooldown.
+Model throttling and persistence failures stop enrichment with a failed job and safe
+operation/status diagnostics; neither is reported as healthy success. Saved collection
+can still be published.
+
+Enrichment and brief reads share the same Notion request policy: a serial per-client
+queue with at least 400 ms between request starts, including skipped/ineligible rows.
+Only explicit HTTP 429 is retried (at most three total attempts per operation).
+Retry-After seconds or HTTP dates are honored; absent/invalid hints use 1s then 2s
+backoff. A hint too long for the remaining budget stops instead of retrying early.
+Each operation has a 30s budget, each SDK request a 10s timeout, with the stage deadline
+also enforced. The pinned Notion SDK v2 does not retry internally. Reads and idempotent
+Summary/state updates use this policy; ambiguous transport errors and non-429 failures
+are not retried. A state-write retry does not repeat a completed Summary write.
+Notion diagnostics contain only operation, HTTP status, reason, attempt/retry counts
+and retry delay. SDK message logging is suppressed; payloads, URLs, credentials and
+raw headers are never included. A 429 alone does not establish rate versus quota cause.
 
 Only recognizable `article`, `main`, or `[role=main]` content is extracted; page-wide
 navigation is not a substitute for article text. HTTP failures, non-HTML responses,

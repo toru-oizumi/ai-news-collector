@@ -7,6 +7,8 @@ import { loadRow, persistSummary } from "./enrichment/notion-store.js";
 import { enrichOne } from "./enrichment/processor.js";
 import { runEnrichment } from "./enrichment/runner.js";
 import { processingBlock } from "./enrichment/state.js";
+import { boundedNotionFetch } from "./notion/bounded-fetch.js";
+import { NotionRequestPolicy } from "./notion/request-policy.js";
 import { type StageReport, runReported } from "./runtime/reports.js";
 
 async function main(report?: StageReport): Promise<void> {
@@ -19,25 +21,33 @@ async function main(report?: StageReport): Promise<void> {
   }
   const notion = new Client({
     auth: env.NOTION_API_KEY,
-    timeoutMs: 20_000,
-    fetch: fetch as unknown as NonNullable<
+    timeoutMs: 10_000,
+    logger: () => {}, // Only allowlisted policy diagnostics are logged.
+    fetch: boundedNotionFetch as unknown as NonNullable<
       NonNullable<ConstructorParameters<typeof Client>[0]>["fetch"]
     >,
   });
+  const deadline = Date.now() + 12 * 60_000;
+  const policy = new NotionRequestPolicy({
+    deadline,
+    diagnostic: (detail) => console.warn(JSON.stringify(detail)),
+  });
   try {
     const result = await runEnrichment(await loadBacklog(), {
-      deadline: Date.now() + 12 * 60_000,
-      load: (page) => loadRow(notion, page),
+      deadline,
+      load: (page) => loadRow(notion, page, policy),
       reserve: async (row, state) => {
         const block = processingBlock(state);
         if ("code" in block)
-          await notion.blocks.update({ block_id: row.blockId, code: block.code });
+          await policy.request("enrichment_reserve", () =>
+            notion.blocks.update({ block_id: row.blockId, code: block.code })
+          );
       },
       process: (row) =>
         enrichOne(row, {
           fetchBody: fetchArticle,
           generate: callMistral,
-          persist: (item, state, summary) => persistSummary(notion, item, state, summary),
+          persist: (item, state, summary) => persistSummary(notion, item, state, summary, policy),
         }),
       checkpoint: saveBacklog,
       wait: () => new Promise((resolve) => setTimeout(resolve, MISTRAL_CONFIG.delayMs)),
@@ -47,9 +57,12 @@ async function main(report?: StageReport): Promise<void> {
         processed: result.processed,
         pending: result.pending,
         failed: result.failed,
+        rateLimited: result.rateLimited,
       };
+    if (report && result.failure) report.failure = result.failure;
+    if (result.failure) console.error(JSON.stringify(result.failure));
     console.log(`Enrichment: ${result.processed} processed; ${result.pending} pending`);
-    if (result.failed) throw new Error("Enrichment persistence unavailable");
+    if (result.failed) throw new Error("Enrichment stopped with a retryable service failure");
   } finally {
     await closeBrowser();
   }

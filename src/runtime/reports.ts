@@ -1,5 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
+import type { EnrichmentFailure } from "../enrichment/runner.js";
+import type { NotionDiagnostic } from "../notion/request-policy.js";
+
 export interface RunIdentity {
   repository: string;
   ref: string;
@@ -28,6 +31,7 @@ export interface StageReport {
   finishedAt?: string;
   status: "running" | "success" | "failed";
   stats: Record<string, number | boolean>;
+  failure?: EnrichmentFailure | NotionDiagnostic;
 }
 export async function atomicJson(path: string, value: unknown): Promise<void> {
   await writeFile(`${path}.tmp`, JSON.stringify(value, null, 2), "utf8");

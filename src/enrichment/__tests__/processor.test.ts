@@ -107,7 +107,7 @@ describe("evidence-gated enrichment", () => {
         code: "rate_limit_exceeded",
         retryAfterSeconds: 90,
       },
-      attempts: 1,
+      attempts: 0,
       nextAttemptAt: "1970-01-01T06:00:00.000Z",
     });
   });
@@ -188,4 +188,64 @@ it("persists safe fetch diagnostics and clears stale failures on recovery", asyn
   expect(deps.generate).not.toHaveBeenCalled();
   await enrichOne({ ...row(), state: failed }, deps);
   expect(deps.persist.mock.calls[1][1]).toMatchObject({ status: "ready", failure: undefined });
+});
+
+it.each([0, 2, 3, 7])(
+  "does not charge model quota errors against %i prior attempts",
+  async (attempts) => {
+    const deps = dependencies();
+    deps.generate.mockRejectedValue(
+      new MistralRequestError({
+        stage: "model",
+        reason: "http_error",
+        httpStatus: 429,
+      })
+    );
+    const result = await enrichOne(
+      { ...row(), state: { ...row().state, status: "rate_limited", attempts } },
+      deps
+    );
+    expect(result).toMatchObject({
+      rateLimited: true,
+      apiCalled: true,
+      state: { attempts, status: "rate_limited" },
+    });
+    expect(result.state.nextAttemptAt).toBe("1970-01-01T06:00:00.000Z");
+    expect(eligible(result.state, 6 * 60 * 60_000 - 1)).toBe(false);
+    expect(eligible(result.state, 6 * 60 * 60_000)).toBe(true);
+  }
+);
+
+it.each([400, 401, 403, 500, 503])("still charges a model HTTP %i failure", async (httpStatus) => {
+  const deps = dependencies();
+  deps.generate.mockRejectedValue(
+    new MistralRequestError({ stage: "model", reason: "http_error", httpStatus })
+  );
+  const result = await enrichOne({ ...row(), state: { ...row().state, attempts: 2 } }, deps);
+  expect(result).toMatchObject({
+    rateLimited: false,
+    state: { attempts: 3, status: "model_failed" },
+  });
+  expect(eligible(result.state, 6 * 60 * 60_000)).toBe(false);
+});
+
+it("recovers a legacy exhausted rate-limited row to ready and clears the failure", async () => {
+  const deps = dependencies();
+  const result = await enrichOne(
+    {
+      ...row(),
+      state: {
+        ...row().state,
+        attempts: 7,
+        status: "rate_limited",
+        failure: { stage: "model", reason: "http_error", httpStatus: 429 },
+      },
+    },
+    deps
+  );
+  expect(result).toMatchObject({
+    rateLimited: false,
+    state: { status: "ready", failure: undefined, nextAttemptAt: undefined },
+  });
+  expect(deps.persist.mock.calls[0][2]).toBe(summary);
 });
