@@ -2,7 +2,7 @@ import { APIResponseError, Client } from "@notionhq/client";
 import { SOURCE_META, env } from "../config.js";
 import { initialState, processingBlock } from "../enrichment/state.js";
 import { lookupUrls } from "../pipeline/dedup.js";
-import type { Article } from "../types.js";
+import type { Article, ArticleSaveResult } from "../types.js";
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000]; // 3 retries with backoff
 
@@ -269,14 +269,18 @@ export async function updateStatus(pageId: string, status: string): Promise<void
 
 // ── Push a single article to Notion ──
 
-export async function pushOneToNotion(article: Article): Promise<string | null> {
+export async function pushOneToNotion(article: Article): Promise<ArticleSaveResult | null> {
   const client = getClient();
   try {
     // A timed-out create may have committed. Check by URL on every queue replay
     // and never blindly retry a non-idempotent POST.
     const existing = await getPageByUrl(article.url);
     await new Promise((resolve) => setTimeout(resolve, 350));
-    if (existing) return `https://www.notion.so/${existing.pageId.replace(/-/g, "")}`;
+    if (existing)
+      return {
+        notionUrl: `https://www.notion.so/${existing.pageId.replace(/-/g, "")}`,
+        outcome: "existing",
+      };
     const page = await client.pages.create({
       parent: { database_id: env.NOTION_DATABASE_ID },
       children: [processingBlock(initialState(article))],
@@ -316,7 +320,10 @@ export async function pushOneToNotion(article: Article): Promise<string | null> 
     });
     // Notion rate limit: 3 requests/sec → ~340ms between requests
     await new Promise((r) => setTimeout(r, 350));
-    return `https://www.notion.so/${page.id.replace(/-/g, "")}`;
+    return {
+      notionUrl: `https://www.notion.so/${page.id.replace(/-/g, "")}`,
+      outcome: "created",
+    };
   } catch {
     console.warn(`[Notion] Save deferred for "${article.title.slice(0, 60)}"`);
     return null;

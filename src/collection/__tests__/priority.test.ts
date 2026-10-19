@@ -25,10 +25,10 @@ describe("fresh collection priority without discarding backlog", () => {
     let time = 0;
     const saved = vi.fn(async () => {
       time = 400_000;
-      return "saved";
+      return { notionUrl: "saved", outcome: "created" as const };
     });
     const checkpoint = vi.fn();
-    const result = await collectPending(prepared, new Set(), {
+    const result = await collectPending(prepared, {
       save: saved,
       checkpoint,
       deadline: 480_000,

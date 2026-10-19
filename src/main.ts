@@ -81,19 +81,19 @@ async function main(report?: StageReport) {
   await savePending(pending);
   // Each save performs a bounded URL lookup and fails closed on lookup failure.
   let snapshotReady = false;
-  const result = await collectPending(pending, new Set(), {
+  const result = await collectPending(pending, {
     save: async (article) => {
-      const url = await pushOneToNotion(article);
-      if (url !== null) {
+      const saved = await pushOneToNotion(article);
+      if (saved !== null) {
         if (!snapshotReady && process.env.GITHUB_OUTPUT) {
           // Publish can proceed even if a later save/checkpoint fails.
           await appendFile(process.env.GITHUB_OUTPUT, "ready=true\n");
         }
         snapshotReady = true;
-        if (article.lang !== "ja") await enqueuePage(article, url);
+        if (article.lang !== "ja") await enqueuePage(article, saved.notionUrl);
         await confirmSaved(confirmed, article.url);
       }
-      return url;
+      return saved;
     },
     checkpoint: savePending,
     deadline: startTime + 8 * 60_000,
@@ -101,11 +101,15 @@ async function main(report?: StageReport) {
   if (process.env.GITHUB_OUTPUT) {
     await appendFile(process.env.GITHUB_OUTPUT, `ready=${snapshotReady || result.pending === 0}\n`);
   }
-  console.log(`Confirmed saved: ${result.saved + result.existing}, pending: ${result.pending}`);
+  console.log(
+    `Confirmed saved: ${result.saved + result.existing} (created: ${result.saved}, existing: ${result.existing}), pending: ${result.pending}`
+  );
   if (report)
     report.stats = {
       ...report.stats,
       confirmed: result.saved + result.existing,
+      created: result.saved,
+      existing: result.existing,
       pending: result.pending,
     };
   if (result.pending > 0) {

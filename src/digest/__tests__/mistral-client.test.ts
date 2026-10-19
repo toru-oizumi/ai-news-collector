@@ -53,7 +53,10 @@ it("keeps only allowlisted provider code and numeric Retry-After", async () => {
     reason: "http_error",
     httpStatus: 429,
     code: "rate_limit_exceeded",
+    codeStatus: "present",
+    codeKind: "string",
     retryAfterSeconds: 90,
+    retryAfterStatus: "valid",
   });
   expect(JSON.stringify(error)).not.toMatch(/private|never persist/);
 });
@@ -102,4 +105,109 @@ it("redacts transport failures", async () => {
   const { callMistral } = await import("../mistral-client.js");
   const error = await callMistral("system", "body", 1000).catch((e) => e);
   expect(error.diagnostic).toEqual({ stage: "model", reason: "timeout" });
+});
+
+it.each([
+  [null, "no_body"],
+  ["private non-JSON provider response", "invalid_json"],
+  ['{"message":"private quota message"}', "missing"],
+  ["x".repeat(9000), "oversized"],
+])("distinguishes code extraction failure without retaining response %s", async (body, status) => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue(new Response(body, { status: 429, headers: { "retry-after": "private" } }))
+  );
+  const { callMistral } = await import("../mistral-client.js");
+  const error = await callMistral("private prompt", "private article", 1000).catch((e) => e);
+  expect(error.diagnostic).toMatchObject({ codeStatus: status, retryAfterStatus: "invalid" });
+  expect(error.diagnostic.retryAfterSeconds).toBeUndefined();
+  expect(JSON.stringify(error)).not.toMatch(/private|quota message/);
+});
+
+it("distinguishes a failed body read from a missing provider code", async () => {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.error(new Error("private response transport details"));
+    },
+  });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(stream, { status: 429 })));
+  const { callMistral } = await import("../mistral-client.js");
+  const error = await callMistral("system", "body", 1000).catch((e) => e);
+  expect(error.diagnostic).toMatchObject({
+    codeStatus: "read_failed",
+    retryAfterStatus: "missing",
+  });
+  expect(JSON.stringify(error)).not.toContain("private");
+});
+
+it.each([
+  [123, "number"],
+  ["123", "numeric_string"],
+  [null, "null"],
+  ["private-user-token", "string"],
+  [{ secret: "private" }, "other"],
+])("classifies but does not retain an undocumented code: %j", async (code, kind) => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue(
+        Response.json(
+          { code, type: "rate_limit_error", message: "private message" },
+          { status: 429 }
+        )
+      )
+  );
+  const { callMistral } = await import("../mistral-client.js");
+  const error = await callMistral("system", "private article", 1000).catch((e) => e);
+  expect(error.diagnostic).toMatchObject({
+    code: "unrecognized",
+    codeKind: kind,
+    providerType: "rate_limit_error",
+  });
+  expect(JSON.stringify(error)).not.toMatch(/123|private|secret/);
+});
+
+it("preserves a documented code/category without the free-text message", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            code: "unknown_model",
+            type: "invalid_request_error",
+            message: "private user details",
+          },
+        },
+        { status: 400 }
+      )
+    )
+  );
+  const { callMistral } = await import("../mistral-client.js");
+  const error = await callMistral("system", "body", 1000).catch((e) => e);
+  expect(error.diagnostic).toMatchObject({
+    code: "unknown_model",
+    codeKind: "string",
+    providerType: "invalid_request_error",
+  });
+  expect(JSON.stringify(error)).not.toContain("private");
+});
+
+it("redacts an unknown error category even when code is missing", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ type: "private-user-token", message: "private" }, { status: 429 })
+      )
+  );
+  const { callMistral } = await import("../mistral-client.js");
+  const error = await callMistral("system", "body", 1000).catch((e) => e);
+  expect(error.diagnostic).toMatchObject({ codeStatus: "missing", providerType: "unrecognized" });
+  expect(error.diagnostic.codeKind).toBeUndefined();
+  expect(JSON.stringify(error)).not.toContain("private");
 });

@@ -3,6 +3,7 @@ import { MISTRAL_CONFIG, env } from "./config.js";
 import { closeBrowser, fetchArticle } from "./digest/fetcher.js";
 import { callMistral } from "./digest/mistral-client.js";
 import { loadBacklog, saveBacklog } from "./enrichment/backlog.js";
+import { loadModelCooldownState, saveModelCooldown } from "./enrichment/model-cooldown.js";
 import { loadRow, persistSummary } from "./enrichment/notion-store.js";
 import { enrichOne } from "./enrichment/processor.js";
 import { runEnrichment } from "./enrichment/runner.js";
@@ -33,8 +34,11 @@ async function main(report?: StageReport): Promise<void> {
     diagnostic: (detail) => console.warn(JSON.stringify(detail)),
   });
   try {
+    const cooldown = await loadModelCooldownState();
     const result = await runEnrichment(await loadBacklog(), {
       deadline,
+      cooldownUntil: cooldown ? Date.parse(cooldown.nextAttemptAt) : undefined,
+      cooldownFailure: cooldown?.failure,
       load: (page) => loadRow(notion, page, policy),
       reserve: async (row, state) => {
         const block = processingBlock(state);
@@ -47,6 +51,7 @@ async function main(report?: StageReport): Promise<void> {
         enrichOne(row, {
           fetchBody: fetchArticle,
           generate: callMistral,
+          onRateLimit: (time, failure) => saveModelCooldown(time, undefined, failure),
           persist: (item, state, summary) => persistSummary(notion, item, state, summary, policy),
         }),
       checkpoint: saveBacklog,

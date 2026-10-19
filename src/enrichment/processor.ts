@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { MISTRAL_CONFIG } from "../config.js";
-import { type BodyFetchResult, MistralRequestError } from "../digest/failures.js";
+import {
+  type BodyFetchResult,
+  MistralRequestError,
+  type ModelFailure,
+} from "../digest/failures.js";
 import { evidenceStatus, parseGroundedSummary } from "./grounding.js";
 import type { ProcessingState } from "./state.js";
 
@@ -26,6 +30,7 @@ export async function enrichOne(
     fetchBody: (url: string) => Promise<BodyFetchResult>;
     generate: (system: string, user: string, maxTokens: number) => Promise<{ text: string }>;
     persist: (row: EnrichmentRow, state: ProcessingState, summary: string) => Promise<void>;
+    onRateLimit?: (nextAttemptAt: string, failure?: ModelFailure) => Promise<void>;
     now?: () => number;
   }
 ): Promise<{ rateLimited: boolean; apiCalled: boolean; state: ProcessingState }> {
@@ -74,11 +79,26 @@ export async function enrichOne(
     state.status = state.failure?.httpStatus === 429 ? "rate_limited" : "model_failed";
     // Model throttling is not an article failure. Do not charge an attempt,
     // including on legacy rate-limited rows that already exhausted their budget.
-    if (state.status === "rate_limited") state.attempts = row.state.attempts;
+    if (state.status === "rate_limited") {
+      state.attempts = row.state.attempts;
+      const hint = state.failure?.stage === "model" ? state.failure.retryAfterSeconds : undefined;
+      // Match the client's bounded Retry-After contract; start at the rejection,
+      // rather than shortening the delay by time spent fetching/generating.
+      const seconds =
+        hint !== undefined && Number.isSafeInteger(hint) && hint >= 0 && hint <= 7 * 24 * 60 * 60
+          ? hint
+          : 0;
+      state.nextAttemptAt = new Date(now() + Math.max(6 * 60 * 60, seconds) * 1000).toISOString();
+    }
   }
   // Summary update happens first, then the state block. Replays overwrite the same
   // properties/block; they never append duplicate digests or overwrite reading Status.
   state.updatedAt = new Date(now()).toISOString();
+  if (state.status === "rate_limited" && state.nextAttemptAt)
+    await deps.onRateLimit?.(
+      state.nextAttemptAt,
+      state.failure?.stage === "model" ? state.failure : undefined
+    );
   await deps.persist(row, state, summary);
   return { rateLimited: state.status === "rate_limited", apiCalled, state };
 }

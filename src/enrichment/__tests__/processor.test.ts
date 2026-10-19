@@ -249,3 +249,36 @@ it("recovers a legacy exhausted rate-limited row to ready and clears the failure
   });
   expect(deps.persist.mock.calls[0][2]).toBe(summary);
 });
+
+it.each([
+  [90, 6 * 60 * 60],
+  [24 * 60 * 60, 24 * 60 * 60],
+  [7 * 24 * 60 * 60, 7 * 24 * 60 * 60],
+  [-1, 6 * 60 * 60],
+  [Number.NaN, 6 * 60 * 60],
+  [Number.POSITIVE_INFINITY, 6 * 60 * 60],
+  [8 * 24 * 60 * 60, 6 * 60 * 60],
+])(
+  "honors bounded Retry-After %s without shortening the default cooldown",
+  async (hint, seconds) => {
+    const deps = dependencies();
+    let time = 0;
+    deps.now = () => time;
+    deps.generate.mockImplementation(async () => {
+      time = 45_000;
+      throw new MistralRequestError({
+        stage: "model",
+        reason: "http_error",
+        httpStatus: 429,
+        retryAfterSeconds: hint,
+      });
+    });
+    const result = await enrichOne(row(), deps);
+    const retryAt = time + seconds * 1000;
+    expect(result.state.nextAttemptAt).toBe(new Date(retryAt).toISOString());
+    expect(eligible(result.state, retryAt - 1)).toBe(false);
+    expect(eligible(result.state, retryAt)).toBe(true);
+    expect(deps.generate).toHaveBeenCalledTimes(1);
+    expect(result.state.attempts).toBe(0);
+  }
+);
