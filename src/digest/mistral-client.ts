@@ -1,22 +1,10 @@
 import { MISTRAL_CONFIG, env } from "../config.js";
-import { MistralRequestError } from "./failures.js";
-
-const SAFE_CODES = new Set([
-  "rate_limit_exceeded",
-  "rate_limited",
-  "too_many_requests",
-  "insufficient_quota",
-  "quota_exceeded",
-  "invalid_api_key",
-  "unauthorized",
-  "invalid_request_error",
-  "invalid_request",
-  "model_not_found",
-  "unknown_model",
-  "server_error",
-  "overloaded",
-  "context_length_exceeded",
-]);
+import {
+  MistralRequestError,
+  type ModelFailure,
+  modelCodeDetails,
+  safeProviderType,
+} from "./failures.js";
 
 /** Convert only bounded, valid Retry-After values; never retain the raw header. */
 export function retryAfterSeconds(value: string | null, now = Date.now()): number | undefined {
@@ -32,9 +20,11 @@ export function retryAfterSeconds(value: string | null, now = Date.now()): numbe
     : undefined;
 }
 
-async function errorCode(response: Response): Promise<string | undefined> {
+async function errorCode(
+  response: Response
+): Promise<Pick<ModelFailure, "code" | "codeStatus" | "codeKind" | "providerType">> {
   const reader = response.body?.getReader();
-  if (!reader) return undefined;
+  if (!reader) return { codeStatus: "no_body" };
   try {
     const chunks: Uint8Array[] = [];
     let size = 0;
@@ -42,15 +32,22 @@ async function errorCode(response: Response): Promise<string | undefined> {
       const next = await reader.read();
       if (next.done) break;
       size += next.value.length;
-      if (size > 8192) return undefined;
+      if (size > 8192) return { codeStatus: "oversized" };
       chunks.push(next.value);
     }
-    const data = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    let data: { error?: { code?: unknown; type?: unknown }; code?: unknown; type?: unknown } | null;
+    try {
+      data = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch {
+      return { codeStatus: "invalid_json" };
+    }
     const code = data?.error?.code ?? data?.code;
-    if (code === undefined) return undefined;
-    return typeof code === "string" && SAFE_CODES.has(code) ? code : "unrecognized";
+    const type = data?.error?.type ?? data?.type;
+    const typeDetails = type === undefined ? {} : { providerType: safeProviderType(type) };
+    if (code === undefined) return { codeStatus: "missing", ...typeDetails };
+    return { ...modelCodeDetails(code), codeStatus: "present", ...typeDetails };
   } catch {
-    return undefined;
+    return { codeStatus: "read_failed" };
   } finally {
     await reader.cancel().catch(() => undefined);
   }
@@ -117,12 +114,16 @@ export async function callMistral(
   }
 
   if (!res.ok) {
+    const retryHeader = res.headers.get("retry-after");
+    const retry = retryAfterSeconds(retryHeader);
     throw new MistralRequestError({
       stage: "model",
       reason: "http_error",
       httpStatus: res.status,
-      code: await errorCode(res),
-      retryAfterSeconds: retryAfterSeconds(res.headers.get("retry-after")),
+      ...(await errorCode(res)),
+      retryAfterSeconds: retry,
+      retryAfterStatus:
+        retry !== undefined ? "valid" : retryHeader === null ? "missing" : "invalid",
     });
   }
 

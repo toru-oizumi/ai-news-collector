@@ -19,11 +19,10 @@ const article = (id: number): Article => ({
 
 describe("collection checkpoint", () => {
   it("saves all 65 articles without depending on a model", async () => {
-    const save = vi.fn().mockResolvedValue("notion-url");
+    const save = vi.fn().mockResolvedValue({ notionUrl: "notion-url", outcome: "created" });
     const checkpoint = vi.fn();
     const result = await collectPending(
       Array.from({ length: 65 }, (_, i) => article(i)),
-      new Set(),
       { save, checkpoint, deadline: 480_000, now: () => 0 }
     );
     expect(result).toEqual({ saved: 65, existing: 0, pending: 0 });
@@ -36,10 +35,10 @@ describe("collection checkpoint", () => {
     const checkpoint = async (rows: Article[]) => {
       pending = rows;
     };
-    const result = await collectPending([article(1), article(2), article(3)], new Set(), {
+    const result = await collectPending([article(1), article(2), article(3)], {
       save: async (a) => {
         if (a.url.endsWith("/2")) throw new Error("connection reset");
-        return "saved";
+        return { notionUrl: "saved", outcome: "created" };
       },
       checkpoint,
       deadline: 480_000,
@@ -47,8 +46,8 @@ describe("collection checkpoint", () => {
     });
     expect(result).toMatchObject({ saved: 2, pending: 1 });
     expect(pending.map((a) => a.url)).toEqual([article(2).url]);
-    const replay = vi.fn().mockResolvedValue("saved");
-    await collectPending(pending, new Set(), {
+    const replay = vi.fn().mockResolvedValue({ notionUrl: "saved", outcome: "created" });
+    await collectPending(pending, {
       save: replay,
       checkpoint,
       deadline: 480_000,
@@ -62,7 +61,7 @@ describe("collection checkpoint", () => {
     const save = vi.fn();
     const checkpoint = vi.fn();
     expect(
-      await collectPending([article(1)], new Set(), {
+      await collectPending([article(1)], {
         save,
         checkpoint,
         deadline: 90_000,
@@ -74,15 +73,33 @@ describe("collection checkpoint", () => {
   });
 
   it("reconciles an already committed create before dropping its checkpoint entry", async () => {
-    const save = vi.fn().mockResolvedValue("existing-page");
-    const result = await collectPending([article(1)], new Set([article(1).url]), {
+    const save = vi.fn().mockResolvedValue({ notionUrl: "existing-page", outcome: "existing" });
+    const result = await collectPending([article(1)], {
       save,
       checkpoint: vi.fn(),
       deadline: 480_000,
       now: () => 0,
     });
     expect(save).toHaveBeenCalledTimes(1); // repairs enrichment enqueue after a crash
-    expect(result).toMatchObject({ existing: 1, pending: 0 });
+    expect(result).toEqual({ saved: 0, existing: 1, pending: 0 });
+  });
+
+  it("counts creations separately from existing confirmations and retains uncertain saves", async () => {
+    const checkpoint = vi.fn();
+    const result = await collectPending([article(1), article(2), article(3)], {
+      save: async (a) =>
+        a.url.endsWith("/3")
+          ? null
+          : {
+              notionUrl: "notion-url",
+              outcome: a.url.endsWith("/1") ? "created" : "existing",
+            },
+      checkpoint,
+      deadline: 480_000,
+      now: () => 0,
+    });
+    expect(result).toEqual({ saved: 1, existing: 1, pending: 1 });
+    expect(checkpoint).toHaveBeenLastCalledWith([article(3)]);
   });
 
   it("round trips dates atomically and rejects a corrupt checkpoint", async () => {

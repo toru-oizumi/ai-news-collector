@@ -39,6 +39,12 @@ No new schedule or external integration has been added.
 - Create is attempted once. If its response is lost, the raw entry stays pending;
   the next run queries by URL before considering another create. New page properties
   and the raw-evidence processing block are created together.
+- The save result distinguishes an acknowledged `created` response from an `existing`
+  URL match. Collection reports retain `confirmed` and additionally record `created`
+  and `existing` counts. A lost create response is not counted as a creation; a later
+  successful lookup counts as existing. Older reports without these fields have an
+  unknown creation count, not zero. Counts describe this completed processing path,
+  not an audit of every possible server-side effect before a crash.
 - A confirmed page is added to `.runtime/enrichment.json` before its URL is marked
   confirmed and its raw pending entry is removed. A crash between these writes can
   replay safely and repair a missing enrichment enqueue.
@@ -79,7 +85,7 @@ It uses existing page blocks, so no database schema migration is needed.
 | `excerpt` | Japanese feed excerpt retained in Summary with an unverified label | No model call |
 | `ready` | Complete model response passed evidence checks | No |
 | `body_unavailable` | Fetch, HTTP, content type or extraction failed | After 6 hours, at most 3 attempts |
-| `rate_limited` | Mistral returned 429; the entire run stops as failed/degraded | After 6 hours; does not consume article attempts |
+| `rate_limited` | Mistral returned 429; the entire run stops as failed/degraded | After at least 6 hours, or a longer valid Retry-After; does not consume article attempts |
 | `model_failed` | Transport, timeout or incomplete model response | After 6 hours, at most 3 attempts |
 | `insufficient_evidence` | Body too short to support a summary | No |
 | `non_ai` | Title/body fails the AI-topic gate | No |
@@ -96,10 +102,40 @@ status, a fixed allowlist of provider error codes
 (other values become `unrecognized`) and valid `Retry-After` values as seconds.
 Error-code parsing reads at most 8 KiB; messages, response text, raw headers, request
 URLs and exception messages are neither logged nor added to the diagnostic. Invalid,
-negative or greater-than-seven-day retry hints are omitted. These hints are diagnostic
-only: the six-hour delay and immediate stop on model 429 remain. Model 429 does not
-consume the three-attempt allowance for article failures.
+negative or greater-than-seven-day retry hints are omitted. On a model 429, the next
+attempt is scheduled from the rejection time using the greater of six hours and the
+valid retry hint. There is no immediate retry or sleep. Model 429 does not consume
+the three-attempt allowance for article failures.
 Diagnostics replace the previous attempt's failure; successful recovery clears it.
+
+Model 429 reports also retain a sanitized `failure.model` and the exact
+`failure.nextAttemptAt`. The parser records `codeStatus` (`present`, `missing`,
+`no_body`, `oversized`, `invalid_json`, `read_failed`) so an absent code can be
+separated from a bounded parsing failure. A present unknown code remains
+`unrecognized`; no provider message or raw value is retained. `retryAfterStatus`
+(`valid`, `missing`, `invalid`) distinguishes an omitted header from a rejected
+value, while only valid bounded seconds are saved. These fields do not infer
+whether the provider means RPM, TPM, account quota or capacity.
+
+The cooldown checkpoint optionally retains the same sanitized model diagnostic.
+Old date-only checkpoints still load; invalid deadline state still fails closed.
+A restored wait reports `operation=wait`, `nextAttemptAt` and the historical cause
+in `model`; it does not set a top-level HTTP 429 or extend the deadline. A shorter
+observation cannot replace a longer deadline or its cause. Only an actual later
+model rejection can establish a new cooldown. Reports are additive to the current
+schema; keys already consumed by existing tools are unchanged.
+
+The same retry time is written to `.runtime/model-cooldown.json` before the Notion
+processing-state write. All enrichment pages share this model circuit, including after
+a Notion write failure or runner restart. An active circuit stops the next enrichment
+run before loading pages or calling the model; its report has `rateLimited=true` and
+`failure.operation=wait`, without inventing a new HTTP 429 response. Raw collection and
+brief generation remain independent. Existing checkpoint sealing, cache and artifact
+steps include this JSON file. Missing cooldown state is supported for older checkpoints;
+malformed state fails closed. Retaining the checkpoint is required across retries.
+This circuit covers the core enrichment workflow, not other applications or optional
+translation calls sharing the same provider account. It does not resolve exhausted
+quota or identify the cause of a provider 429.
 
 The enrichment queue keeps its existing FIFO order in this change. Fresh raw saves
 remain browsable without waiting for a model. Automatic chat briefs now require a
@@ -289,3 +325,45 @@ Backfilling or correcting historical data is a separate reviewed operation. Thro
 and runtime under real service latency remain unmeasured. If collection exceeds ten
 English articles per run on average, the bounded enrichment backlog will grow; raw
 articles remain saved and can be browsed while enrichment is pending.
+
+## Explicit legacy cooldown adoption
+
+`npm run checkpoint -- migrate-model-cooldown [directory]` validates the sealed
+checkpoint before reconciling a missing/older cooldown with a saved actual model
+429 report. The repository/ref must match the normal checkpoint environment.
+The deadline is anchored to the saved report's `finishedAt`, never to the migration
+clock, using at least six hours and a longer valid retry hint. New reports with a valid
+explicit rejection-based deadline retain it exactly, without re-anchoring it to
+report completion.
+A repeated migration is idempotent. A historical cause in an `operation=wait`
+report cannot create or extend a deadline. Malformed state is refused; missing
+state without actual rejection evidence reports `missing_evidence` and does not
+authorize a model call. Only `expired` returns exit code 0. `active` exits 1 even
+when its migration succeeded. Use a copy of a freshly verified source artifact;
+the command is not automatically inserted into CI or normal digest startup.
+For adoption, first retain an immutable copy of the latest complete checkpoint,
+then run migration against a working copy with matching repository/ref environment.
+Review its `active`, `expired` or `missing_evidence` result before enrichment.
+A legacy checkpoint without this file does not automatically reconstruct a global
+cooldown during normal digest startup. Actual Actions cache/artifact restoration
+of the new cooldown state has not yet been verified in a live runner.
+
+Unknown provider code values remain redacted. New responses optionally record only
+`codeKind` (`number`, `numeric_string`, `string`, `null`, `other`) and the four
+`providerType` categories documented in the
+[Mistral error glossary](https://docs.mistral.ai/resources/error-glossary); other types
+become `unrecognized`.
+This does not treat undocumented numeric codes as safe or infer an exhausted quota.
+Previously redacted records cannot recover their original kind, length or category;
+restoring an old checkpoint must not invent those fields. No provider message,
+parameter value or raw code has been added to the log contract.
+
+## Follow-up validation limits
+
+The earlier offline-verification counts above describe the initial implementation.
+The save-outcome/cooldown/diagnostic follow-up passed 295 tests before PR preparation;
+PR validation records a fresh rerun separately. The incident reference is
+[run 39163352123](https://github.com/toru-oizumi/ai-news-collector/actions/runs/39163352123).
+Its model 429 cause remains undetermined; new Notion creation and a successful
+body-grounded summary have not been verified in production for this follow-up.
+The six-hour minimum is an application policy, not a provider reset guarantee.

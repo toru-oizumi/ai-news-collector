@@ -1,3 +1,9 @@
+/** Observed persistence outcome; an existing page is not evidence of a new create. */
+export interface ArticleSaveResult {
+  notionUrl: string;
+  outcome: "created" | "existing";
+}
+
 // ── Normalized article schema ──
 export interface Article {
   title: string;

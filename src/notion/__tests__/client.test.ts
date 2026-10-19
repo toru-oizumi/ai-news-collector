@@ -48,7 +48,10 @@ describe("idempotent Notion persistence", () => {
     expect(await lost).toBeNull();
     const replay = pushOneToNotion(article);
     await vi.runAllTimersAsync();
-    expect(await replay).toContain("0123456789abcdef0123456789abcdef");
+    expect(await replay).toEqual({
+      notionUrl: "https://www.notion.so/0123456789abcdef0123456789abcdef",
+      outcome: "existing",
+    });
     expect(api.create).toHaveBeenCalledTimes(1);
   });
 
@@ -58,7 +61,10 @@ describe("idempotent Notion persistence", () => {
     const { pushOneToNotion } = await import("../client.js");
     const saved = pushOneToNotion(article);
     await vi.runAllTimersAsync();
-    expect(await saved).toContain("0123456789abcdef0123456789abcdef");
+    expect(await saved).toEqual({
+      notionUrl: "https://www.notion.so/0123456789abcdef0123456789abcdef",
+      outcome: "created",
+    });
     const request = api.create.mock.calls[0][0];
     expect(request.properties.Summary.rich_text[0].text.content).toBe("");
     expect(request.children[0].code.rich_text[0].text.content).toContain('"status":"pending"');

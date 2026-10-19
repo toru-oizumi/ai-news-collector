@@ -1,3 +1,4 @@
+import { type ModelFailure, safeModelFailure } from "../digest/failures.js";
 import { type NotionDiagnostic, NotionRequestError } from "../notion/request-policy.js";
 import type { PendingPage } from "./backlog.js";
 import type { EnrichmentRow } from "./processor.js";
@@ -15,6 +16,8 @@ export function finished(state: ProcessingState): boolean {
 export interface EnrichmentFailure {
   operation: "load" | "reserve" | "process" | "checkpoint" | "wait" | "model";
   httpStatus?: number;
+  model?: ModelFailure;
+  nextAttemptAt?: string;
 }
 
 /** Bounded FIFO processing. All I/O is injected so timeouts and replays are tested locally. */
@@ -29,6 +32,8 @@ export async function runEnrichment(
     checkpoint: (pages: PendingPage[]) => Promise<void>;
     wait: () => Promise<void>;
     now?: () => number;
+    cooldownUntil?: number;
+    cooldownFailure?: ModelFailure;
     deadline: number;
   }
 ): Promise<{
@@ -39,6 +44,20 @@ export async function runEnrichment(
   failure?: EnrichmentFailure | NotionDiagnostic;
 }> {
   const now = deps.now ?? Date.now;
+  if (deps.cooldownUntil !== undefined && now() < deps.cooldownUntil) {
+    const model = safeModelFailure(deps.cooldownFailure);
+    return {
+      processed: 0,
+      pending: pages.length,
+      failed: true,
+      rateLimited: true,
+      failure: {
+        operation: "wait", // persisted cause below is historical, not a new HTTP response
+        nextAttemptAt: new Date(deps.cooldownUntil).toISOString(),
+        ...(model && { model }),
+      },
+    };
+  }
   let pending = pages;
   let processed = 0;
   let failed = false;
@@ -78,7 +97,13 @@ export async function runEnrichment(
       if (result.rateLimited) {
         failed = true;
         rateLimited = true;
-        failure = { operation: "model", httpStatus: 429 };
+        const model = safeModelFailure(result.state.failure);
+        failure = {
+          operation: "model",
+          httpStatus: 429,
+          ...(model && { model }),
+          ...(result.state.nextAttemptAt && { nextAttemptAt: result.state.nextAttemptAt }),
+        };
         break;
       }
       if (result.apiCalled) {
